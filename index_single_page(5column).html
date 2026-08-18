@@ -1,0 +1,3361 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>綠島聚落人口儀表板（四欄免捲動版）</title>
+
+<!--
+  v2 更新：
+  1. 新增 ⑩ 土地利用（多時期滑動比較視窗）與 ⑪ 氣象站（僅總覽） 兩個元件
+  2. 改為明亮底色（白／淺灰），深藍變成主色調用在強調與資料上，不再是背景
+  3. 「單時期」上方新增可點選的年份時間軸（2015-2024），取代原本固定取最新一年
+  左上村莊選擇（南寮／中寮／公館／總覽） × 上方時期切換（單時期／多時期）
+  真實資料接上後，只要替換 VILLAGE_CFG 裡的數字／陣列即可，版面與圖表邏輯不用重寫。
+-->
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@600;900&family=Noto+Sans+TC:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+
+<style>
+  :root{
+    --bg: #f3f5f8;
+    --panel: #ffffff;
+    --panel-2: #eef1f6;
+    --line: rgba(16,35,59,0.08);
+    --line-strong: rgba(16,35,59,0.16);
+    --text: #10233b;
+    --text-dim: #54708c;
+    --text-faint: #8ba0b5;
+    --blue: #2f5fa8;
+    --blue-dim: rgba(47,95,168,0.10);
+    --teal: #1f9186;
+    --teal-dim: rgba(31,145,134,0.10);
+    --gold: #b9822f;
+    --gold-dim: rgba(185,130,47,0.12);
+    --rose: #b85f5d;
+    --rose-dim: rgba(184,95,93,0.10);
+    --radius: 14px;
+    --shadow: 0 1px 2px rgba(16,35,59,0.04), 0 1px 8px rgba(16,35,59,0.05);
+    --font-display: "Noto Serif TC", serif;
+    --font-body: "Noto Sans TC", sans-serif;
+    --font-mono: "IBM Plex Mono", monospace;
+  }
+  *{ box-sizing: border-box; }
+  @media (prefers-reduced-motion: reduce){ *{ animation-duration:.01ms !important; transition-duration:.01ms !important; } }
+
+  html,body{
+    margin:0; background: var(--bg); color: var(--text);
+    font-family: var(--font-body); -webkit-font-smoothing: antialiased;
+  }
+  button{ font-family: inherit; }
+  button:focus-visible{ outline:2px solid var(--gold); outline-offset:2px; }
+
+  .page{ margin: 0 auto; padding: 30px 24px 70px; }
+
+  /* ---------- TOP BAR ---------- */
+  .topbar{
+    display:flex; align-items:center; justify-content:space-between;
+    gap: 14px; flex-wrap: wrap;
+    padding-bottom: 6px; margin-bottom: 4px; /* 上下留白再縮小 */
+    border-bottom: 1px solid var(--line);
+  }
+  .brand .eyebrow{
+    font-family: var(--font-mono); font-size: 11.5px; letter-spacing:.12em;
+    color: var(--text-faint); margin-bottom: 6px;
+  }
+  .brand h1{
+    font-family: var(--font-display); font-weight: 900; font-size: 20px; margin:0; /* 標題字級縮小 */
+    letter-spacing: .01em; color: var(--blue);
+  }
+  .controls{ display:flex; align-items:center; gap: 10px; flex-wrap: wrap; }
+
+  .segmented{
+    display:flex; background: var(--panel); border:1px solid var(--line-strong);
+    border-radius: 999px; padding: 3px; gap: 2px; box-shadow: var(--shadow);
+  }
+  .segmented button{
+    border:none; background:transparent; color: var(--text-dim);
+    padding: 5px 12px; border-radius: 999px; cursor:pointer; /* 按鈕padding縮小 */
+    font-size: 12px; font-weight: 500; transition: all .15s ease; /* 字級縮小 */
+    white-space: nowrap;
+  }
+  .segmented button.active{ background: var(--blue); color: #fff; }
+  #villageSeg button[data-village="總覽"]{ margin-left: 6px; position: relative; }
+  #villageSeg button[data-village="總覽"]::before{
+    content:""; position:absolute; left:-6px; top:50%; transform:translateY(-50%);
+    width:1px; height:16px; background: var(--line-strong);
+  }
+  #villageSeg button.active[data-village="總覽"]{ background: var(--gold); }
+  #periodSeg button.active{ background: var(--teal); }
+
+  /* ---------- TIMELINE（現在嵌在標題列中間，改成緊湊樣式） ---------- */
+  .timeline-wrap{
+    display:none; align-items:center; gap: 10px;
+    flex:1 1 auto; min-width: 240px; max-width: 640px; /* 中間伸縮，寬度可以自己調 */
+    padding: 4px 0;
+  }
+  .timeline-wrap.show{ display:flex; }
+  .timeline-label{
+    font-family: var(--font-mono); font-size: 10.5px; color: var(--text-faint);
+    white-space: nowrap;
+  }
+  .timeline-track{ position:relative; flex:1; min-width:0; height: 32px; display:flex; align-items:center; } /* 高度縮小，配合放進標題列 */
+  @media (max-width: 640px){
+    .timeline-wrap{ flex-wrap: wrap; }
+    .timeline-track{ overflow-x:auto; padding-bottom:6px; }
+    .timeline-ticks{ min-width: 620px; }
+  }
+  .timeline-line{
+    position:absolute; left:6px; right:6px; top:50%; height:2px;
+    background: var(--line-strong);
+  }
+  .timeline-arrow{
+    position:absolute; right:-2px; top:50%; transform: translateY(-50%);
+    width:0; height:0; border-top:5px solid transparent; border-bottom:5px solid transparent;
+    border-left: 7px solid var(--line-strong);
+  }
+  .timeline-ticks{ position:relative; display:flex; justify-content:space-between; width:100%; z-index:1; }
+  .timeline-tick{
+    background:none; border:none; cursor:pointer; display:flex; flex-direction:column; align-items:center; gap:6px;
+    color: var(--text-faint); font-family: var(--font-mono); font-size: 11px; padding: 4px 2px;
+  }
+  .timeline-tick .dot{
+    width:9px; height:9px; border-radius:50%; background: var(--panel); border:2px solid var(--line-strong);
+    transition: all .15s ease;
+  }
+  .timeline-tick.active{ color: var(--blue); font-weight:700; }
+  .timeline-tick.active .dot{ background: var(--blue); border-color: var(--blue); width:12px; height:12px; }
+  .timeline-tick:hover .dot{ border-color: var(--blue); }
+  #mapCardTimeControl .timeline-ticks{ position:relative; }
+  #mapCardTimeControl .timeline-ticks::before{ content:""; position:absolute; left:4px; right:4px; top:9px; height:1.5px; background:var(--line-strong); z-index:0; }
+  #mapCardTimeControl .map-mini-tick{ padding:2px 1px; gap:3px; font-size:9.5px; flex:1; min-width:0; z-index:1; }
+  #mapCardTimeControl .map-mini-tick .dot{ width:7px; height:7px; }
+  #mapCardTimeControl .map-mini-tick.active .dot{ width:10px; height:10px; }
+  #mapCardTimeControl .map-mini-tick span:last-child{ visibility:hidden; }
+  #mapCardTimeControl .map-mini-tick.active span:last-child{ visibility:visible; }
+
+  /* ---------- MASONRY BOARD（JS動態量高度分三欄，沒資料的卡片直接隱藏不佔位） ---------- */
+  html{ overflow-x: hidden; }
+  .page{ overflow-x: hidden; }
+  .masonry-wrap{
+    display:flex;
+    gap:16px;
+    align-items:flex-start;
+  }
+  .mcol{
+    flex:1 1 0;
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+    min-width:0;
+  }
+  .combo-region{
+    flex:2 1 0; /* 佔兩欄份的寬度，跟其他單欄比是2:1 */
+    display:flex;
+    flex-direction:column;
+    gap:16px;
+    min-width:0;
+  }
+  .combo-row{
+    display:flex;
+    gap:16px;
+  }
+  .combo-row .mcol{ flex:1 1 0; }
+  #card3Slot:empty{ display:none; margin:0; }
+  #card9Slot:empty{ display:none; margin:0; }
+  .masonry-wrap .card{ width:300px; margin-bottom:0; } /* 卡片固定設計寬度，欄位較窄時靠JS的zoom縮小，不是直接拉伸變形 */
+  @media (max-width: 1180px){
+    .masonry-wrap{ flex-direction:column; }
+  }
+
+  .card{
+    background: var(--panel); border:1px solid var(--line); border-radius: var(--radius);
+    display:flex; flex-direction: column; min-height: 210px; box-shadow: var(--shadow); min-width:0;
+  }
+  .card-body, .chart-wrap, .stat-grid, .stat-block{ min-width:0; }
+  .card-head{
+    display:flex; align-items:center; gap:10px;
+    padding: 14px 16px 10px;
+  }
+  .badge{
+    width: 24px; height:24px; border-radius:50%;
+    border: 1px solid var(--line-strong); background: var(--panel-2);
+    display:flex; align-items:center; justify-content:center;
+    font-family: var(--font-mono); font-size: 12px; color: var(--blue);
+    flex-shrink:0;
+  }
+  .card-head h3{ margin:0; font-size: 14.5px; font-weight: 700; }
+  .card-title-group{ display:flex; flex-direction:column; gap:2px; }
+  .card-subtitle{ font-size:10.5px; color: var(--text-faint); font-weight:400; }
+  .card-body{ flex:1; padding: 4px 16px 16px; position:relative; }
+  .chart-wrap{ position:relative; height: 220px; }
+  .chart-wrap.tall{ height: 260px; }
+  .donut-center{
+    position:absolute; top:46%; left:50%; transform:translate(-50%,-50%);
+    text-align:center; pointer-events:none; display:flex; flex-direction:column; align-items:center; gap:2px;
+  }
+  .donut-center .dc-value{ font-family: var(--font-mono); font-size:22px; font-weight:600; color: var(--text); line-height:1.1; }
+  .donut-center .dc-label{ font-size:11px; color: var(--text-faint); }
+  .donut-center .dc-sub{ font-family: var(--font-mono); font-size:11.5px; color: var(--text-dim); margin-top:2px; }
+
+  .ext-tooltip{
+    position:absolute; z-index:20; display:flex; align-items:center;
+    pointer-events:none; opacity:0; transition:opacity .08s ease; transform:translateY(-50%);
+    white-space:nowrap;
+  }
+  .ext-tooltip .ext-box{
+    background:#ffffff; border:1px solid var(--line-strong); border-radius:8px;
+    padding:8px 12px; box-shadow: var(--shadow); font-size:12.5px; color: var(--text);
+    display:flex; align-items:center; gap:8px;
+  }
+  .ext-tooltip .ext-dot{ width:9px; height:9px; border-radius:2px; display:inline-block; flex-shrink:0; }
+  .ext-tooltip .ext-caret{ width:0; height:0; border-top:6px solid transparent; border-bottom:6px solid transparent; flex-shrink:0; }
+  .ext-tooltip .ext-caret.point-right{ border-left:7px solid #ffffff; }
+  .ext-tooltip .ext-caret.point-left{ border-right:7px solid #ffffff; }
+
+  /* card0 map */
+  #card0 .card-body{ padding:0; flex: 0 0 460px; }
+  #card0 svg{ width: 100%; max-width: 260px; height:auto; }
+  .village-meta{ text-align:center; }
+  .village-meta .name{ font-family: var(--font-display); font-weight:700; font-size:20px; color: var(--blue); }
+  .village-meta .sub{ font-family: var(--font-mono); font-size:11.5px; color: var(--text-faint); margin-top:4px; }
+
+  /* stat grid for card3 */
+  .stat-grid{
+    display:grid; grid-template-columns: 1fr 1fr; gap: 10px;
+  }
+  .stat-grid.single-stat{ grid-template-columns: 1fr; } /* 選單模式：只顯示一個指標，讓它撐滿寬度 */
+  .stat-block{
+    background: var(--panel-2); border:1px solid var(--line); border-radius: 10px;
+    padding: 10px 12px; display:flex; flex-direction:column; gap:6px;
+  }
+  .stat-label{ font-size: 11px; color: var(--text-faint); }
+  .sub-heading{
+    font-weight:700; font-size:13px; color: var(--text);
+    margin: 14px 0 8px; padding-top: 10px; border-top: 1px solid var(--line);
+  }
+  .stat-value{ font-family: var(--font-mono); font-size: 21px; color: var(--text); }
+  .stat-value small{ font-size:11px; color:var(--text-faint); font-weight:400; margin-left:3px; }
+  .stat-row{ display:flex; justify-content:space-between; font-family: var(--font-mono); font-size:12px; color: var(--text-dim); }
+  .stat-row b{ color: var(--text); font-weight:500; }
+  .icon-row{ display:flex; gap:3px; flex-wrap:wrap; align-items:center; }
+  .icon-row .ic{ width:11px; height:11px; border-radius:50%; }
+  .arrow-good{ color:#2f9e56; font-weight:700; margin-left:4px; }
+  .arrow-bad{ color:#c0392b; font-weight:700; margin-left:4px; }
+  .arrow-flat{ color: var(--text-faint); font-weight:700; margin-left:4px; }
+  .picto-row{ display:flex; flex-wrap:wrap; gap:3px; margin-top:4px; }
+  .picto-ic{ display:inline-flex; cursor:default; }
+  .idx-tabs{ display:flex; gap:4px; margin-bottom:6px; }
+  .idx-tabs button{
+    border:1px solid var(--line-strong); background: var(--panel); color: var(--text-faint);
+    font-size:10.5px; padding:3px 8px; border-radius:999px; cursor:pointer;
+  }
+  .idx-tabs button.active{ background: var(--blue); color:#fff; border-color: var(--blue); }
+  .card-note{
+    font-size:11px; color: var(--text-faint); line-height:1.85;
+    margin-top:12px; padding-top:10px; border-top:1px solid var(--line);
+  }
+  .mini-note{ font-size:10px; color: var(--text-faint); line-height:1.6; margin-top:auto; padding-top:6px; }
+  .mini-note-row{ display:flex; align-items:center; justify-content:space-between; gap:6px; margin-top:auto; padding-top:6px; }
+  .mini-note-row .mini-note-text{ font-size:10px; color: var(--text-faint); line-height:1.5; }
+  .info-btn{
+    width:15px; height:15px; border-radius:50%; border:1px solid var(--blue);
+    background: transparent; color: var(--blue); font-size:9.5px; font-style:italic; font-family:serif;
+    cursor:pointer; flex-shrink:0; display:flex; align-items:center; justify-content:center; padding:0; line-height:1;
+  }
+  .info-btn:hover{ background: var(--blue-dim); }
+  .card-info-btn{ }
+  .card-info-detail{ margin: 0 16px 12px; }
+  .card-head-actions{ margin-left:auto; display:flex; align-items:center; gap:6px; }
+  .expand-btn{
+    width:22px; height:22px; border-radius:6px; border:1px solid var(--line-strong);
+    background:transparent; color: var(--text-faint); cursor:pointer;
+    display:flex; align-items:center; justify-content:center; font-size:12px; flex-shrink:0;
+  }
+  .expand-btn:hover{ border-color: var(--blue); color: var(--blue); }
+  .expand-btn-mini{
+    position:absolute; top:8px; right:8px; z-index:3;
+    width:18px; height:18px; border-radius:5px; border:1px solid var(--line-strong);
+    background: var(--panel); color: var(--text-faint); cursor:pointer; font-size:10px;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .expand-btn-mini:hover{ border-color: var(--blue); color: var(--blue); }
+  .stat-block:fullscreen{ background: var(--panel); padding:28px; display:flex; flex-direction:column; justify-content:center; }
+  .stat-block:fullscreen .mini-canvas-wrap{ height:70vh; }
+  .stat-block:fullscreen .picto-row{ transform: scale(1.6); transform-origin: left top; margin-top:20px; }
+  .card:fullscreen{ padding:28px 36px; overflow:auto; background: var(--bg); }
+  .card:fullscreen .chart-wrap{ height: 62vh; }
+  .card:fullscreen .mini-canvas-wrap{ height: 220px; }
+  .card:fullscreen .card-head h3{ font-size:20px; }
+  #card0:fullscreen{ background: var(--panel); }
+  #card0:fullscreen .card-body{ flex: 1 1 auto !important; height:100% !important; }
+  .info-detail{
+    font-size:10px; color: var(--text-faint); line-height:1.7; margin-top:6px;
+    padding:8px 10px; background: var(--panel); border:1px solid var(--line); border-radius:8px;
+  }
+  .picto-values{ font-size:10.5px; color: var(--text-dim); margin-top:5px; display:flex; gap:12px; }
+  .edu-rose-col{ display:flex; flex-direction:column; gap:14px; margin-top:10px; }
+  .edu-rose-title{ font-size:11.5px; font-weight:700; color: var(--text); text-align:center; margin-bottom:2px; }
+  .ga-legend{ display:flex; flex-direction:column; gap:5px; margin-top:8px; }
+  .ga-legend-row{ display:flex; justify-content:center; gap:16px; font-size:10.5px; color: var(--text-dim); }
+  .ga-legend-row .dot{ width:8px; height:8px; border-radius:2px; display:inline-block; margin-right:5px; }
+  .ga-legend-item{ transition: opacity .15s ease; user-select:none; }
+  .rose-tooltip{
+    position:absolute; z-index:15; display:none; align-items:center; gap:7px;
+    background:#ffffff; border:1px solid var(--line-strong); border-radius:8px;
+    padding:6px 11px; box-shadow: var(--shadow); font-size:12px; color: var(--text);
+    pointer-events:none; white-space:nowrap;
+  }
+  .rose-tooltip .rose-tip-dot{ width:9px; height:9px; border-radius:2px; display:inline-block; flex-shrink:0; }
+  .rose-wedge{ cursor:pointer; }
+  .mini-canvas-wrap{ position:relative; height:88px; }
+  .stat-grid.wide-depend{ grid-template-columns: repeat(3, 1fr); }
+  .stat-grid.stat-grid-full{ grid-template-columns: repeat(2, 1fr); }
+  .stat-grid.stat-grid-full .mini-canvas-wrap{ height: 130px; }
+  .compare-widget{ position:relative; }
+  .compare-toggle{
+    border:1px solid var(--line-strong); background: var(--panel-2); color: var(--text-dim);
+    font-size:11.5px; padding:6px 12px; border-radius:999px; cursor:pointer;
+  }
+  .compare-toggle:hover{ border-color: var(--blue); color: var(--blue); }
+  .compare-panel{
+    position:absolute; z-index:20; top:calc(100% + 6px); left:0;
+    background: var(--panel); border:1px solid var(--line-strong); border-radius:10px;
+    box-shadow: var(--shadow); padding:12px 14px; width: 300px; max-height: 340px; overflow-y:auto;
+  }
+  .compare-row{ display:flex; align-items:center; gap:7px; font-size:12px; color: var(--text); padding:4px 0; cursor:pointer; }
+  .compare-panel-head{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  .compare-clear{
+    border:1px solid var(--line-strong); background: transparent; color: var(--text-faint);
+    font-size:11px; padding:3px 10px; border-radius:999px; cursor:pointer;
+  }
+  .compare-clear:hover{ border-color:#b85f5d; color:#b85f5d; }
+  .compare-hint{ font-size:10.5px; color: var(--text-faint); line-height:1.6; margin-top:6px; }
+  .mini-waterfall-item{ margin-bottom:14px; }
+  .mini-waterfall-item:last-child{ margin-bottom:0; }
+  .mini-waterfall-row{ display:flex; gap:10px; }
+  .mini-waterfall-row .mini-waterfall-item{ flex:1; min-width:0; margin-bottom:0; }
+  .lu-cat-panel{ width:100%; border:1px solid var(--line-strong); border-radius:8px; padding:10px; max-height:180px; overflow-y:auto; }
+  .lu-cat-actions{ display:flex; gap:6px; margin-bottom:8px; }
+  .compare-row.small{ font-size:11.5px; color: var(--text-dim); padding:2px 0; }
+  .compare-towns{ margin-top:6px; padding-top:6px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:2px; }
+  .compare-town-item{ display:flex; flex-direction:column; }
+  .compare-sub-list{ flex-direction:column; margin:2px 0 6px 20px; padding-left:8px; border-left:2px solid var(--line); }
+  .stat-grid.wide-depend #s-depend{ grid-column: 1 / -1; }
+  .stat-grid.wide-depend #s-depend .mini-canvas-wrap{ height:190px; }
+
+  /* heatmap */
+  table.heat{ width:100%; border-collapse: collapse; font-family: var(--font-mono); font-size: 10px; }
+  table.heat th{ font-weight:500; color: var(--text-faint); padding:4px 3px; text-align:center; font-size:9.5px; }
+  table.heat td{ text-align:center; padding:6px 2px; border-radius:4px; }
+  table.heat th.rowhead{ text-align:left; color: var(--text-dim); }
+  table.med-table{ width:100%; border-collapse: collapse; font-size:11.5px; }
+  table.med-table th, table.med-table td{ border:1px solid var(--line-strong); padding:6px 8px; text-align:center; color: var(--text); }
+  table.med-table th{ background: var(--panel-2); color: var(--text-dim); font-weight:500; }
+  .rate-row{ display:flex; margin-top:10px; border:1px solid var(--line-strong); border-radius:6px; overflow:hidden; }
+  .rate-row-label{
+    width:44px; flex-shrink:0; display:flex; align-items:center; justify-content:center; text-align:center;
+    background: var(--panel-2); color: var(--text-dim); font-size:10.5px; line-height:1.3; padding:6px 3px;
+    border-right:1px solid var(--line-strong);
+  }
+  .rate-row-values{ display:flex; flex:1; }
+  .rate-cell{ flex:1; text-align:center; padding:6px 4px; border-right:1px solid var(--line); }
+  .rate-cell:last-child{ border-right:none; }
+  .rate-cell-name{ font-size:10.5px; color: var(--text-faint); }
+  .rate-cell-val{ font-size:12.5px; color: var(--text); font-weight:600; margin-top:2px; }
+
+  .placeholder-x{
+    height:100%; display:flex; align-items:center; justify-content:center;
+    flex-direction:column; gap:8px; color: var(--text-faint);
+    font-family: var(--font-mono); font-size:12.5px; text-align:center; min-height: 180px;
+  }
+  .placeholder-x .x-mark{ font-size:34px; color: var(--line-strong); }
+
+  .toggle-mini{
+    position:absolute; top:10px; right:16px; display:flex; gap:4px;
+    background: var(--panel-2); border-radius:999px; padding:3px; border:1px solid var(--line-strong);
+  }
+  .toggle-mini button{
+    border:none; background:transparent; color: var(--text-faint); font-size:11px;
+    padding:4px 10px; border-radius:999px; cursor:pointer;
+  }
+  .toggle-mini button.active{ background: var(--panel); color: var(--gold); box-shadow: var(--shadow); }
+
+  .toggle-center{ display:flex; justify-content:center; gap:4px; margin: 0 0 10px; flex-wrap:wrap; }
+  .toggle-center button{
+    border:1px solid var(--line-strong); background: var(--panel-2); color: var(--text-dim);
+    font-size:11.5px; padding:5px 14px; border-radius:999px; cursor:pointer; transition: all .15s ease;
+  }
+  .toggle-center button.active{ background: var(--blue); color:#fff; border-color: var(--blue); }
+  .toggle-pair{ display:flex; justify-content:center; gap:16px; flex-wrap:wrap; margin-bottom:10px; }
+
+  .legend-row{ display:flex; gap:14px; flex-wrap:wrap; font-size:11px; color: var(--text-dim); margin-top:6px; }
+  .legend-row .dot{ display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:5px; }
+
+  /* land use slider */
+  .lu-compare{
+    position:relative; width:100%; height: 220px; border-radius:10px; overflow:hidden;
+    border:1px solid var(--line-strong);
+  }
+  .lu-layer{ position:absolute; inset:0; display:grid; grid-template-columns: repeat(12, 1fr); grid-template-rows: repeat(8,1fr); }
+  .lu-tag{
+    position:absolute; top:8px; font-family: var(--font-mono); font-size:11px;
+    background: rgba(255,255,255,0.9); padding:2px 8px; border-radius:6px; color: var(--text); z-index:3;
+    border:1px solid var(--line-strong);
+  }
+  .lu-tag.left{ left:8px; } .lu-tag.right{ right:8px; }
+  .lu-handle-line{
+    position:absolute; top:0; bottom:0; width:2px; background: var(--blue); z-index:2; pointer-events:none;
+  }
+  .lu-handle-knob{
+    position:absolute; top:50%; width:26px; height:26px; border-radius:50%; background: var(--blue); color:#fff;
+    display:flex; align-items:center; justify-content:center; font-size:12px; transform: translate(-50%,-50%); z-index:3; pointer-events:none;
+  }
+  .lu-range{
+    position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor: ew-resize; z-index:4; margin:0;
+  }
+  .lu-legend{ display:flex; gap:12px; flex-wrap:wrap; margin-top:8px; font-size:10.5px; color: var(--text-dim); }
+  .lu-legend .dot{ width:8px; height:8px; border-radius:2px; display:inline-block; margin-right:4px; }
+
+  footer.note{
+    margin-top: 30px; font-size:12px; color: var(--text-faint); line-height:1.8;
+    border-top:1px solid var(--line); padding-top:16px;
+  }
+  footer.note code{ background: var(--panel-2); padding:1px 6px; border-radius:4px; }
+.esri-legend__layer-caption{ display:none !important; }
+.esri-legend__service-label{ font-weight:700 !important; }
+#mapCardViewDiv .esri-legend{ font-size:9px; max-width:135px; padding:5px 7px; line-height:1.3; }
+#mapCardViewDiv .esri-legend__symbol{ width:11px !important; height:11px !important; }
+#mapCardViewDiv .esri-legend__layer-title{ font-size:9.5px; font-weight:700; margin-bottom:1px; }
+#mapCardViewDiv .esri-legend__info{ font-size:9px; }
+#mapCardViewDiv .esri-legend__layer-body{ margin-bottom:2px; }
+</style>
+<link rel="stylesheet" href="https://js.arcgis.com/4.29/esri/themes/light/main.css">
+<script src="https://js.arcgis.com/4.29/"></script>
+</head>
+<body>
+<div id="loadingOverlay" style="position:fixed;inset:0;background:#f4f6f8;z-index:9999;display:flex;align-items:center;justify-content:center;font-family:'Noto Sans TC',sans-serif;color:#54708c;font-size:14px;">資料載入中...</div>
+<div class="page">
+
+  <div class="topbar">
+    <div class="brand">
+      <h1>綠島三村儀表板</h1>
+    </div>
+    <div class="timeline-wrap" id="timelineWrap">
+      <div class="timeline-label">選擇年份</div>
+      <div class="timeline-track">
+        <div class="timeline-line"></div>
+        <div class="timeline-arrow"></div>
+        <div class="timeline-ticks" id="timelineTicks"></div>
+      </div>
+    </div>
+    <div class="controls">
+      <div class="segmented" id="villageSeg">
+        <button data-village="南寮" class="active">南寮</button>
+        <button data-village="中寮">中寮</button>
+        <button data-village="公館">公館</button>
+        <button data-village="總覽">總覽（三村）</button>
+      </div>
+      <div class="segmented" id="periodSeg">
+        <button data-period="single" class="active">單時期</button>
+        <button data-period="multi">多時期</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="masonry-wrap">
+    <div class="combo-region" id="comboRegion">
+      <div id="card3Slot"></div>
+      <div class="combo-row">
+        <div class="mcol" id="mcol0"></div>
+        <div class="mcol" id="mcol1"></div>
+      </div>
+    </div>
+    <div class="mcol" id="mcol2"></div>
+    <div class="combo-region" id="comboRegion2">
+      <div id="card9Slot"></div>
+      <div class="combo-row">
+        <div class="mcol" id="mcol3"></div>
+        <div class="mcol" id="mcol4"></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="cardPool" style="display:none">
+    <div class="card masonry-card" id="card1">
+      <div class="card-head"><div class="badge">①</div><h3>男女人口</h3><div class="card-head-actions"><button class="expand-btn" type="button" title="全螢幕">⛶</button><button class="info-btn card-info-btn" type="button" data-info="src1">i</button></div></div>
+      <div class="info-detail card-info-detail" id="info-src1" style="display:none">資料來源：社會經濟資料開放平台－臺東縣村里人口統計</div>
+      <div class="card-body">
+        <div id="body1toggle"></div>
+        <div class="chart-wrap" id="body1"></div>
+      </div>
+    </div>
+
+    <div class="card masonry-card" id="card2">
+      <div class="card-head"><div class="badge">②</div><h3>年齡結構</h3><div class="card-head-actions"><button class="expand-btn" type="button" title="全螢幕">⛶</button><button class="info-btn card-info-btn" type="button" data-info="src2">i</button></div></div>
+      <div class="info-detail card-info-detail" id="info-src2" style="display:none">資料來源：社會經濟資料開放平台－臺東縣村里行政區三段年齡組性別人口統計<br>※5歲年齡組細分圖另取自社會經濟資料開放平台－臺東縣村里行政區五歲年齡組人口統計</div>
+      <div class="card-body"><div id="body2"></div></div>
+      <div style="padding:0 16px 14px"><div class="legend-row" id="body2note"></div></div>
+    </div>
+
+    <div class="card masonry-card" id="card3">
+      <div class="card-head"><div class="badge">③</div><h3>人口指標</h3><div id="compareWidgetSlot" style="display:none; margin-left:14px;"></div><div class="card-head-actions"><button class="expand-btn" type="button" title="全螢幕">⛶</button><button class="info-btn card-info-btn" type="button" data-info="src3">i</button></div></div>
+      <div class="info-detail card-info-detail" id="info-src3" style="display:none">資料來源：社會經濟資料開放平台－臺東縣村里人口指標（戶數取自臺東縣村里人口統計）</div>
+      <div class="card-body">
+        <div class="idx-tabs" id="card3Tabs" style="display:none; margin-bottom:10px;">
+          <button data-stat="density" class="active">人口密度</button>
+          <button data-stat="aging">老化指數</button>
+          <button data-stat="household">戶數</button>
+          <button data-stat="depend">扶養負擔</button>
+        </div>
+        <div class="stat-grid">
+          <div class="stat-block" id="s-density"></div>
+          <div class="stat-block" id="s-aging"></div>
+          <div class="stat-block" id="s-household"></div>
+          <div class="stat-block" id="s-depend"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card masonry-card" id="card0" style="position:relative;">
+      <button class="expand-btn" type="button" title="全螢幕" style="position:absolute; top:12px; right:12px; z-index:5;">⛶</button>
+      <div class="card-body" id="body0" style="height:460px; padding:0;"></div>
+    </div>
+
+    <div class="card masonry-card" id="card4">
+      <div class="card-head"><div class="badge">④</div><h3>教育程度</h3><div class="card-head-actions"><button class="expand-btn" type="button" title="全螢幕">⛶</button><button class="info-btn card-info-btn" type="button" data-info="src4">i</button></div></div>
+      <div class="info-detail card-info-detail" id="info-src4" style="display:none">資料來源：社會經濟資料開放平台－臺東縣村里15歲以上人口五歲年齡組教育程度統計<br>※原始資料為五歲年齡組，考慮到呈現的可讀性及便利性，將其合併為十歲年齡組呈現。</div>
+      <div class="card-body"><div id="body4"></div></div>
+    </div>
+
+    <div class="card masonry-card" id="card5">
+      <div class="card-head"><div class="badge">⑤</div><h3>婚姻狀況</h3><div class="card-head-actions"><button class="expand-btn" type="button" title="全螢幕">⛶</button><button class="info-btn card-info-btn" type="button" data-info="src5">i</button></div></div>
+      <div class="info-detail card-info-detail" id="info-src5" style="display:none">資料來源：社會經濟資料開放平台－臺東縣村里15歲以上人口婚姻狀況統計<br>※2019年起同性/異性分開統計，「未婚」無同性/異性之分，故實際為 7 類。</div>
+      <div class="card-body"><div id="body5"></div></div>
+    </div>
+
+    <div class="card masonry-card" id="card6">
+      <div class="card-head"><div class="badge">⑥</div><h3>人口增減</h3><div class="card-head-actions"><button class="expand-btn" type="button" title="全螢幕">⛶</button><button class="info-btn card-info-btn" type="button" data-info="src6">i</button></div></div>
+      <div class="info-detail card-info-detail" id="info-src6" style="display:none">資料來源：<br>・社會經濟資料開放平台－臺東縣村里出生統計<br>・社會經濟資料開放平台－臺東縣村里死亡統計<br>・社會經濟資料開放平台－臺東縣村里人口消長統計<br>※社會增加＝遷入－遷出。<br>※總增加＝自然增加＋社會增加。因官方「社會增加」與遷入減遷出略有落差，為求全表數字邏輯一致改採自算，故本頁總增加與官方公布值可能有微小出入。<br>※鄉內遷徙淨增＝鄉內遷入－鄉內遷出。<br>※「總覽」狀態為公平比較三村（人口規模不同），改以「率」（每千人）呈現，計算方式為該項人數 ÷ 當年人口 × 1000；瀑布圖仍維持實際人數，並於總增減／自然增加／社會增加頁籤下方附上各村對應的率。</div>
+      <div class="card-body"><div id="body6"></div></div>
+    </div>
+
+    <div class="card masonry-card" id="card7">
+      <div class="card-head"><div class="badge">⑦</div><h3>獨居老人</h3><div class="card-head-actions"><button class="expand-btn" type="button" title="全螢幕">⛶</button><button class="info-btn card-info-btn" type="button" data-info="src7">i</button></div></div>
+      <div class="info-detail card-info-detail" id="info-src7" style="display:none">資料來源：社會經濟資料開放平台－臺東縣村里行政區獨居老人分析統計<br>※原始資料僅有 2020 年一次調查，故僅在「單時期」且年份為 2020 年時顯示。<br>※其餘狀態暫無對應資料。<br>※總覽單時期的比例，分母為該村 2020 年 65 歲以上人口數。</div>
+      <div class="card-body"><div id="body7"></div></div>
+    </div>
+
+    <div class="card masonry-card" id="card8">
+      <div class="card-head"><div class="badge">⑧</div><h3>屋齡分布</h3><div class="card-head-actions"><button class="expand-btn" type="button" title="全螢幕">⛶</button><button class="info-btn card-info-btn" type="button" data-info="src8">i</button></div></div>
+      <div class="info-detail card-info-detail" id="info-src8" style="display:none">資料來源：社會經濟資料開放平台－臺東縣村里臺東縣行政區房屋屋齡統計<br>※原始資料僅到 2015-2019 年（無 2020 年後資料），故時間軸超過 2019 年時本卡片無法顯示。<br>※公館村部分年份原始資料為 0（可能為未申報或資料缺漏），暫以無資料處理。</div>
+      <div class="card-body"><div id="body8"></div></div>
+    </div>
+
+    <div class="card masonry-card" id="cardMed">
+      <div class="card-head"><div class="badge">⑨</div><h3>醫療機構</h3><div class="card-head-actions"><button class="expand-btn" type="button" title="全螢幕">⛶</button><button class="info-btn card-info-btn" type="button" data-info="srcMed">i</button></div></div>
+      <div class="info-detail card-info-detail" id="info-srcMed" style="display:none">資料來源：<br>・社會經濟資料開放平台－臺東縣村里醫療機構概況統計<br>・診所喵－台東縣綠島鄉診所<br>※此指標為現況統計，無時間序列，故「多時期」狀態顯示的數值與「單時期」相同。</div>
+      <div class="card-body"><div id="bodyMed"></div></div>
+    </div>
+
+    <div class="card masonry-card" id="card9">
+      <div class="card-head"><div class="badge">⑩</div><h3>土地利用</h3><div class="card-head-actions"><button class="expand-btn" type="button" title="全螢幕">⛶</button><button class="info-btn card-info-btn" type="button" data-info="src10">i</button></div></div>
+      <div class="info-detail card-info-detail" id="info-src10" style="display:none">資料來源：內政部國土利用調查成果圖資（綠島鄉，107 年與 112 年兩期）<br>※圖層透過實驗室 Portal 發布，僅在「多時期」狀態顯示，左右拖曳可比較兩期土地利用分布。</div>
+      <div class="card-body"><div id="body9"></div></div>
+    </div>
+
+    <div class="card masonry-card" id="card10">
+      <div class="card-head"><div class="badge">⑪</div><h3>氣象資料－自動氣象站綠島站</h3><div class="card-head-actions"><button class="expand-btn" type="button" title="全螢幕">⛶</button><button class="info-btn card-info-btn" type="button" data-info="src11">i</button></div></div>
+      <div class="info-detail card-info-detail" id="info-src11" style="display:none">資料來源：CODiS－綠島自動氣象站、LTSER LYUDAO－海洋研究站氣象資料<br>※由於 CODiS 綠島自動氣象站 2023/1-2024/7 無氣溫資料，因此 2023、2024 年皆使用 LTSER LYUDAO 之每日氣象資料－海洋研究站資料代替（註：資料來源不同僅供參考）。<br>※本站為綠島鄉單一測站資料，不分村里，僅在「總覽」狀態顯示。<br>※氣溫資料缺值月份：2019 年 4、5 月；2023 年 1、2、12 月。</div>
+      <div class="card-body"><div id="body10"></div></div>
+    </div>
+
+    <div class="card masonry-card" id="card12">
+      <div class="card-head"><div class="badge">⑫</div><h3>觀光人次</h3><div class="card-head-actions"><button class="expand-btn" type="button" title="全螢幕">⛶</button><button class="info-btn card-info-btn" type="button" data-info="src12">i</button></div></div>
+      <div class="info-detail card-info-detail" id="info-src12" style="display:none">資料來源：交通部觀光署觀光統計資料庫（綠島遊憩區）<br>※本資料為綠島整體遊憩區人次，不分村里，僅在「總覽」狀態顯示。</div>
+      <div class="card-body"><div id="body12"></div></div>
+    </div>
+  </div>
+
+  
+</div>
+
+<script>
+function initDashboard(REAL_DATA, REAL_INDEX, COUNTY_DATA, ALL_TOWNS_DATA, REAL_EDU, REAL_MARITAL, REAL_POPCHANGE, REAL_ELDERLY_ALONE, REAL_HOUSING, MEDICAL_FACILITIES, REAL_WEATHER, REAL_TOURISM, LU_AREA_DATA) {
+
+/* ============================================================
+   基礎設定
+   ============================================================ */
+const VILLAGES = ["南寮","中寮","公館"];
+const YEARS = [2015,2016,2017,2018,2019,2020,2021,2022,2023,2024];
+const N = YEARS.length;
+
+const COLOR = {
+  blue: "#2f5fa8", teal: "#1f9186", gold: "#b9822f", rose: "#b85f5d",
+  villages: { "南寮":"#2f5fa8", "中寮":"#1f9186", "公館":"#b9822f" },
+  male: "#2f5fa8", female: "#b85f5d"
+};
+function tint(hex, amt){
+  const h = hex.replace("#","");
+  const r = parseInt(h.substring(0,2),16), g = parseInt(h.substring(2,4),16), b = parseInt(h.substring(4,6),16);
+  const nr = Math.round(r + (255-r)*amt), ng = Math.round(g + (255-g)*amt), nb = Math.round(b + (255-b)*amt);
+  return `rgb(${nr},${ng},${nb})`;
+}
+const BLUE_DARK = COLOR.blue, RED_DARK = COLOR.rose;
+const MALE_SHADES = { young: tint(BLUE_DARK,0.55), adult: tint(BLUE_DARK,0.22), old: BLUE_DARK };
+const FEMALE_SHADES = { young: tint(RED_DARK,0.55), adult: tint(RED_DARK,0.22), old: RED_DARK };
+const AGE_DEF_NOTE = "幼年＝0-14歲、青壯年＝15-64歲、老年＝65歲以上";
+
+function linear(base,end,n){
+  const out=[];
+  for(let i=0;i<n;i++){ const t=i/(n-1); out.push(Math.round((base+(end-base)*t)*10)/10); }
+  return out;
+}
+function interpArr(baseArr,endArr,n){
+  const out=[];
+  for(let i=0;i<n;i++){
+    const t=i/(n-1);
+    out.push(baseArr.map((b,idx)=> Math.round(b+(endArr[idx]-b)*t)));
+  }
+  return out;
+}
+function seededNoise(seed){ return (Math.sin(seed*12.9898)*10000) % 1; }
+
+/* ============================================================
+   村莊示範資料基準（正式接資料時只需替換這個物件）
+   ============================================================ */
+const VILLAGE_CFG = {
+  "南寮": {
+    area: 5.2, totalBase:1260, totalEnd:1180, maleShare:.515,
+    densityBase:310, densityEnd:285, householdBase:560, householdEnd:520,
+    agingBase:140, agingEnd:172, sexRatioBase:107, sexRatioEnd:107,
+    dependYoungBase:18, dependYoungEnd:14, dependOldBase:24, dependOldEnd:36,
+    age3Base:[16,63,21], age3End:[12,56,32],
+    maritalBase:[32,55,8,5], maritalEnd:[29,54,10,7],
+    birthBase:9, birthEnd:6, deathBase:11, deathEnd:14, moveInBase:20, moveInEnd:16, moveOutBase:26, moveOutEnd:22,
+    elderlyAloneBase:38, elderlyAloneEnd:52,
+    elderlyPyramid:{ male:[10,7,3], female:[8,6,4] },
+    housingAgeBase:[8,10,14,18,20,16,14], housingAgeEnd:[3,5,9,14,20,22,27],
+    eduMatrix:[
+      [0,1,3,10,45,15,24,2,0],
+      [0,1,4,12,35,15,28,4,1],
+      [1,2,8,18,32,12,22,4,1],
+      [2,4,15,22,28,10,16,2,1],
+      [4,8,25,25,20,8,9,1,0],
+      [10,15,35,20,12,4,3,1,0]
+    ],
+    eduUnivBase:[18,22,16,10,6,3], eduUnivEnd:[26,33,27,19,10,4]
+  },
+  "中寮": {
+    area: 6.8, totalBase:1420, totalEnd:1340, maleShare:.512,
+    densityBase:350, densityEnd:325, householdBase:630, householdEnd:590,
+    agingBase:130, agingEnd:162, sexRatioBase:106, sexRatioEnd:106,
+    dependYoungBase:19, dependYoungEnd:15, dependOldBase:22, dependOldEnd:33,
+    age3Base:[17,64,19], age3End:[13,58,29],
+    maritalBase:[34,54,7,5], maritalEnd:[31,53,9,7],
+    birthBase:11, birthEnd:7, deathBase:10, deathEnd:13, moveInBase:24, moveInEnd:19, moveOutBase:28, moveOutEnd:24,
+    elderlyAloneBase:40, elderlyAloneEnd:55,
+    elderlyPyramid:{ male:[11,8,4], female:[9,7,5] },
+    housingAgeBase:[10,12,15,19,20,14,10], housingAgeEnd:[4,6,10,15,20,20,25],
+    eduMatrix:[
+      [0,1,2,8,42,17,27,3,0],
+      [0,1,3,10,33,16,31,5,1],
+      [1,1,6,16,30,13,26,5,2],
+      [1,3,12,20,27,11,20,4,2],
+      [3,6,22,24,21,9,13,2,0],
+      [8,13,32,21,14,5,6,1,0]
+    ],
+    eduUnivBase:[22,26,20,13,7,4], eduUnivEnd:[30,37,31,22,11,5]
+  },
+  "公館": {
+    area: 3.9, totalBase:700, totalEnd:662, maleShare:.52,
+    densityBase:180, densityEnd:170, householdBase:320, householdEnd:310,
+    agingBase:160, agingEnd:190, sexRatioBase:109, sexRatioEnd:109,
+    dependYoungBase:15, dependYoungEnd:11, dependOldBase:30, dependOldEnd:42,
+    age3Base:[13,60,27], age3End:[9,52,39],
+    maritalBase:[27,56,9,8], maritalEnd:[24,54,11,11],
+    birthBase:5, birthEnd:3, deathBase:7, deathEnd:9, moveInBase:10, moveInEnd:7, moveOutBase:14, moveOutEnd:12,
+    elderlyAloneBase:25, elderlyAloneEnd:34,
+    elderlyPyramid:{ male:[6,5,3], female:[5,4,3] },
+    housingAgeBase:[5,7,11,15,19,20,23], housingAgeEnd:[2,3,6,10,17,24,38],
+    eduMatrix:[
+      [1,2,4,12,46,13,20,1.8,0.2],
+      [1,2,5,14,37,13,24,3,1],
+      [2,3,10,20,31,10,18,3,1],
+      [3,6,18,24,26,8,13,1.5,0.5],
+      [6,11,28,26,18,6,4.5,0.5,0],
+      [13,18,38,19,9,2,0.8,0.2,0]
+    ],
+    eduUnivBase:[12,15,10,6,3,1], eduUnivEnd:[19,25,18,11,5,2]
+  }
+};
+
+VILLAGES.forEach(v=>{
+  const c = VILLAGE_CFG[v];
+  c.totalSeries = linear(c.totalBase, c.totalEnd, N);
+  c.maleSeries = c.totalSeries.map(t=>Math.round(t*c.maleShare));
+  c.femaleSeries = c.totalSeries.map((t,i)=>t-c.maleSeries[i]);
+  c.densitySeries = linear(c.densityBase, c.densityEnd, N);
+  c.householdSeries = linear(c.householdBase, c.householdEnd, N);
+  c.agingSeries = linear(c.agingBase, c.agingEnd, N);
+  c.sexRatioSeries = linear(c.sexRatioBase, c.sexRatioEnd, N);
+  c.dependYoungSeries = linear(c.dependYoungBase, c.dependYoungEnd, N);
+  c.dependOldSeries = linear(c.dependOldBase, c.dependOldEnd, N);
+  c.age3Series = interpArr(c.age3Base, c.age3End, N);
+  c.maritalSeries = interpArr(c.maritalBase, c.maritalEnd, N);
+  c.birthSeries = linear(c.birthBase, c.birthEnd, N);
+  c.deathSeries = linear(c.deathBase, c.deathEnd, N);
+  c.moveInSeries = linear(c.moveInBase, c.moveInEnd, N);
+  c.moveOutSeries = linear(c.moveOutBase, c.moveOutEnd, N);
+  c.elderlyAloneSeries = linear(c.elderlyAloneBase, c.elderlyAloneEnd, N);
+  c.housingAgeSeries = interpArr(c.housingAgeBase, c.housingAgeEnd, N);
+  c.eduUnivSeries = interpArr(c.eduUnivBase, c.eduUnivEnd, N);
+});
+
+// ============================================================
+// 真實資料覆蓋（來源：臺東縣村里統計 CSV，綠島鄉三村，2015-2024年12月）
+// ============================================================
+VILLAGES.forEach(v=>{
+  const c = VILLAGE_CFG[v]; const r = REAL_DATA[v];
+  if(!r) return;
+  c.totalSeries = r.total; c.maleSeries = r.male; c.femaleSeries = r.female; c.householdSeries = r.household;
+  c.sexRatioSeries = r.sexRatio; c.agingSeries = r.agingIndex; c.dependYoungSeries = r.dependYoung; c.dependOldSeries = r.dependOld;
+  c.age3Series = YEARS.map((y,i)=> [ Math.round(r.young[i]/r.total[i]*100), Math.round(r.adult[i]/r.total[i]*100), Math.round(r.old[i]/r.total[i]*100) ]);
+  c.age3GenderSeries = { young_m:r.young_m, young_f:r.young_f, adult_m:r.adult_m, adult_f:r.adult_f, old_m:r.old_m, old_f:r.old_f };
+  c.age5Series = r.age5;
+});
+
+
+
+let comparisons = [{type:"county"}];
+let comparePanelOpen = false;
+const COMPARE_COUNTY_COLOR = "#8a97a3";
+const COMPARE_COLORS = ["#d6336c","#a0522d","#e8590c","#495057","#7c5cbf","#5c4d7d"];
+function getCompareSeries(spec, key){
+  if(spec.type==="county") return COUNTY_DATA[key];
+  const t = ALL_TOWNS_DATA[spec.town];
+  if(!t) return null;
+  if(spec.mode==="avg") return t.avg[key];
+  return t.villages[spec.village] ? t.villages[spec.village][key] : null;
+}
+function getCompareLabel(spec){
+  if(spec.type==="county") return "全縣平均";
+  if(spec.mode==="avg") return spec.town+"平均";
+  return spec.village;
+}
+function compareDatasets(key){
+  let townIdx = 0;
+  return comparisons.map((spec)=>{
+    const color = spec.type==="county" ? COMPARE_COUNTY_COLOR : COMPARE_COLORS[(townIdx++) % COMPARE_COLORS.length];
+    return {
+      label:getCompareLabel(spec), data:getCompareSeries(spec,key),
+      borderColor: color, borderDash:[4,3], backgroundColor:"transparent", tension:.3
+    };
+  });
+}
+let expandedTowns = new Set();
+function buildCompareWidget(){
+  const slot = document.getElementById("compareWidgetSlot");
+  if(!slot) return;
+  const existingPanel = document.getElementById("comparePanel");
+  const savedScroll = existingPanel ? existingPanel.scrollTop : 0;
+  const towns = Object.keys(ALL_TOWNS_DATA);
+  const countyChecked = !!comparisons.find(c=>c.type==="county");
+  slot.innerHTML = `
+    <div class="compare-widget">
+      <button class="compare-toggle" type="button">比較對象（${comparisons.length}）▾</button>
+      <div class="compare-panel" id="comparePanel" style="display:${comparePanelOpen?"block":"none"}">
+        <div class="compare-panel-head">
+          <label class="compare-row"><input type="checkbox" data-kind="county" ${countyChecked?"checked":""}> 全縣平均</label>
+          <button class="compare-clear" type="button">清除</button>
+        </div>
+        <div class="compare-hint">＊建議一次不要選太多比較對象，導致線條太多不易閱讀。</div>
+        <div class="compare-towns">
+          ${towns.map(t=>{
+            const townEntries = comparisons.filter(c=>c.type==="town" && c.town===t);
+            const isExpanded = expandedTowns.has(t);
+            const hasAvg = townEntries.some(c=>c.mode==="avg");
+            const villages = Object.keys(ALL_TOWNS_DATA[t].villages);
+            return `<div class="compare-town-item">
+              <label class="compare-row"><input type="checkbox" data-kind="town-master" data-town="${t}" ${isExpanded?"checked":""}> ${t}</label>
+              <div class="compare-sub-list" data-town="${t}" style="display:${isExpanded?"flex":"none"}">
+                <label class="compare-row small"><input type="checkbox" data-kind="town-avg" data-town="${t}" ${hasAvg?"checked":""}> ${t}平均</label>
+                ${villages.map(v=>{
+                  const checked = townEntries.some(c=>c.mode==="village" && c.village===v);
+                  return `<label class="compare-row small"><input type="checkbox" data-kind="town-village" data-town="${t}" data-village="${v}" ${checked?"checked":""}> ${v}</label>`;
+                }).join("")}
+              </div>
+            </div>`;
+          }).join("")}
+        </div>
+      </div>
+    </div>`;
+  document.getElementById("comparePanel").scrollTop = savedScroll;
+  slot.querySelector(".compare-toggle").addEventListener("click", ()=>{
+    comparePanelOpen = !comparePanelOpen;
+    document.getElementById("comparePanel").style.display = comparePanelOpen ? "block" : "none";
+  });
+  slot.querySelector(".compare-clear").addEventListener("click", ()=>{
+    comparisons = [];
+    expandedTowns = new Set();
+    buildCompareWidget();
+    render3();
+  });
+  slot.querySelector('input[data-kind="county"]').addEventListener("change", (e)=>{
+    if(e.target.checked){ if(!comparisons.find(c=>c.type==="county")) comparisons.unshift({type:"county"}); }
+    else { comparisons = comparisons.filter(c=>c.type!=="county"); }
+    buildCompareWidget();
+    render3();
+  });
+  slot.querySelectorAll('input[data-kind="town-master"]').forEach(cb=>{
+    cb.addEventListener("change", ()=>{
+      const town = cb.dataset.town;
+      if(cb.checked){
+        expandedTowns.add(town);
+        if(!comparisons.some(c=>c.type==="town" && c.town===town)){
+          comparisons.push({type:"town",town,mode:"avg"});
+        }
+      } else {
+        expandedTowns.delete(town);
+        comparisons = comparisons.filter(c=>!(c.type==="town" && c.town===town));
+      }
+      buildCompareWidget();
+      render3();
+    });
+  });
+  slot.querySelectorAll('input[data-kind="town-avg"]').forEach(cb=>{
+    cb.addEventListener("change", ()=>{
+      const town = cb.dataset.town;
+      if(cb.checked){
+        comparisons.push({type:"town",town,mode:"avg"});
+      } else {
+        comparisons = comparisons.filter(c=>!(c.type==="town" && c.town===town && c.mode==="avg"));
+      }
+      buildCompareWidget();
+      render3();
+    });
+  });
+  slot.querySelectorAll('input[data-kind="town-village"]').forEach(cb=>{
+    cb.addEventListener("change", ()=>{
+      const town = cb.dataset.town, village = cb.dataset.village;
+      if(cb.checked){
+        comparisons.push({type:"town",town,mode:"village",village});
+      } else {
+        comparisons = comparisons.filter(c=>!(c.type==="town" && c.town===town && c.mode==="village" && c.village===village));
+      }
+      buildCompareWidget();
+      render3();
+    });
+  });
+}
+
+VILLAGES.forEach(v=>{
+  const c = VILLAGE_CFG[v]; const e = REAL_EDU[v];
+  if(!e) return;
+  c.eduByYear = e.eduByYear;
+  c.eduSeries = e.eduSeries;
+});
+
+
+
+VILLAGES.forEach(v=>{
+  const c = VILLAGE_CFG[v]; const idx = REAL_INDEX[v];
+  if(!idx) return;
+  c.densitySeries = idx.density;
+  c.agingSeries = idx.aging;
+  c.dependYoungSeries = idx.dependYoung;
+  c.dependOldSeries = idx.dependOld;
+  c.dependTotalSeries = idx.dependTotal;
+});
+VILLAGES.forEach(v=>{
+  const pop = VILLAGE_CFG[v].totalSeries;
+  const p = REAL_POPCHANGE[v];
+  const rate = arr => arr.map((val,i)=> pop[i] ? Math.round(val/pop[i]*1000*100)/100 : null);
+  p.birthRate = rate(p.born);
+  p.deathRate = rate(p.dead);
+  p.entryRate = rate(p.entry_p);
+  p.exitRate = rate(p.exit_p);
+  p.intraRate = rate(p.intra);
+  p.totalRate = rate(p.total);
+});
+
+const MONTHS = ["1月","2月","3月","4月","5月","6月","7月","8月","9月","10月","11月","12月"];
+
+const state = { village: "南寮", period: "single", yearIndex: N-1 };
+const isOverview = ()=> state.village === "總覽";
+const isMulti = ()=> state.period === "multi";
+const chartRegistry = {};
+
+// 自訂 HTML 浮標（外部 tooltip）：箱體往遠離圖表中心的方向展開，
+// 尖角則固定指向滑鼠／資料點的方向，兩者分開控制，不依賴 Chart.js 內建的自動對齊猜測。
+function donutExternalTooltip(context){
+  const { chart, tooltip } = context;
+  const wrap = chart.canvas.parentNode;
+  let el = wrap.querySelector(".ext-tooltip");
+  if(!el){
+    el = document.createElement("div");
+    el.className = "ext-tooltip";
+    el.innerHTML = `<div class="ext-box"><span class="ext-dot"></span><span class="ext-text"></span></div><div class="ext-caret"></div>`;
+    wrap.appendChild(el);
+  }
+  if(tooltip.opacity === 0){ el.style.opacity = 0; return; }
+
+  const dp = tooltip.dataPoints[0];
+  const color = dp.dataset.backgroundColor[dp.dataIndex];
+  el.querySelector(".ext-dot").style.background = color;
+  el.querySelector(".ext-text").innerHTML = `<b>${dp.label}</b> ${dp.formattedValue}`;
+
+  const area = chart.chartArea;
+  const centerX = (area.left + area.right) / 2;
+  const isLeft = tooltip.caretX < centerX;
+  const box = el.querySelector(".ext-box");
+  const caret = el.querySelector(".ext-caret");
+
+  if(isLeft){
+    box.style.order = 1; caret.style.order = 2;
+    caret.className = "ext-caret point-right";
+    el.style.left = "auto";
+    el.style.right = (chart.width - area.left + 10) + "px";
+  } else {
+    box.style.order = 2; caret.style.order = 1;
+    caret.className = "ext-caret point-left";
+    el.style.right = "auto";
+    el.style.left = (area.right + 10) + "px";
+  }
+  el.style.top = tooltip.caretY + "px";
+  el.style.opacity = 1;
+}
+
+function freshCanvas(containerId){
+  const el = document.getElementById(containerId);
+  el.innerHTML = "";
+  const canvas = document.createElement("canvas");
+  el.appendChild(canvas);
+  if(chartRegistry[containerId]){ chartRegistry[containerId].destroy(); }
+  return canvas;
+}
+function mountChart(containerId, config){
+  const canvas = freshCanvas(containerId);
+  const chart = new Chart(canvas, config);
+  chartRegistry[containerId] = chart;
+  return chart;
+}
+const baseFont = { family: "IBM Plex Mono", size: 10.5 };
+const gridColor = "rgba(16,35,59,0.07)";
+const tickColor = "#54708c";
+function axisTitle(text){
+  return { display:true, text, color:"#8fa3b8", font:{family:"Noto Sans TC", size:10.5} };
+}
+function baseOptions(extra={}, titles={}){
+  const merged = Object.assign({
+    responsive:true, maintainAspectRatio:false,
+    plugins:{
+      legend:{ labels:{ color:"#54708c", font:{family:"Noto Sans TC", size:11}, boxWidth:10, usePointStyle:true } },
+      tooltip:{ backgroundColor:"#ffffff", titleColor:"#10233b", bodyColor:"#54708c", borderColor:"rgba(16,35,59,0.12)", borderWidth:1 }
+    },
+    scales:{
+      x:{ ticks:{color:tickColor, font:baseFont}, grid:{color:gridColor} },
+      y:{ ticks:{color:tickColor, font:baseFont}, grid:{color:gridColor} }
+    }
+  }, extra);
+  if(merged.scales){
+    ["x","y","y1","r"].forEach(axis=>{
+      if(merged.scales[axis] && titles[axis]){
+        merged.scales[axis] = Object.assign({}, merged.scales[axis], { title: axisTitle(titles[axis]) });
+      }
+    });
+  }
+  return merged;
+}
+
+function buildTimeline(){
+  const ticks = document.getElementById("timelineTicks");
+  ticks.innerHTML = "";
+  YEARS.forEach((y,idx)=>{
+    const btn = document.createElement("button");
+    btn.className = "timeline-tick" + (idx===state.yearIndex ? " active" : "");
+    btn.innerHTML = `<span class="dot"></span><span>${y}</span>`;
+    btn.addEventListener("click", ()=>{ state.yearIndex = idx; renderAll(); });
+    ticks.appendChild(btn);
+  });
+}
+function updateTimelineVisibility(){
+  const wrap = document.getElementById("timelineWrap");
+  wrap.classList.toggle("show", !isMulti());
+  document.querySelectorAll(".timeline-tick").forEach((btn,idx)=> btn.classList.toggle("active", idx===state.yearIndex));
+}
+
+const VILLAGE_SHAPES = {
+  "南寮": `<path d="M40 20 L150 15 L190 60 L170 130 L100 150 L40 110 Z" fill="${COLOR.blue}11" stroke="${COLOR.blue}" stroke-width="2.2"/>`,
+  "中寮": `<path d="M30 40 L120 10 L200 40 L210 100 L150 150 L60 140 L20 90 Z" fill="${COLOR.teal}11" stroke="${COLOR.teal}" stroke-width="2.2"/>`,
+  "公館": `<path d="M50 30 L140 25 L170 80 L130 140 L60 130 L35 80 Z" fill="${COLOR.gold}11" stroke="${COLOR.gold}" stroke-width="2.2"/>`,
+  "總覽": `<path d="M40 20 L150 15 L190 60 L170 130 L100 150 L40 110 Z" fill="none" stroke="${COLOR.blue}" stroke-width="1.6" opacity="0.85"/>
+           <path d="M30 40 L120 10 L200 40 L210 100 L150 150 L60 140 L20 90 Z" fill="none" stroke="${COLOR.teal}" stroke-width="1.6" opacity="0.85" transform="translate(20,4)"/>
+           <path d="M50 30 L140 25 L170 80 L130 140 L60 130 L35 80 Z" fill="none" stroke="${COLOR.gold}" stroke-width="1.6" opacity="0.85" transform="translate(-8,10)"/>`
+};
+function renderCard0(){
+  const el = document.getElementById("body0");
+  const v = state.village;
+  const yearLabel = isMulti() ? `${YEARS[0]} – ${YEARS[N-1]}` : `${YEARS[state.yearIndex]} 年`;
+  let metaHtml;
+  if(isOverview()){
+    metaHtml = `<div class="village-meta"><div class="name">綠島鄉 · 總覽</div><div class="sub">南寮・中寮・公館 三村比較 · ${yearLabel}</div></div>`;
+  } else {
+    const c = VILLAGE_CFG[v];
+    metaHtml = `<div class="village-meta"><div class="name">${v}</div><div class="sub">面積約 ${c.area} km² · ${yearLabel}</div></div>`;
+  }
+  el.innerHTML = `<svg viewBox="0 0 230 170">${VILLAGE_SHAPES[v]}</svg>${metaHtml}`;
+}
+
+let pop1Mode = "total";
+function pop1GroupRange(){
+  let min=0, max=0;
+  ["totalSeries","maleSeries","femaleSeries"].forEach(key=>{
+    VILLAGES.forEach(v=>{
+      VILLAGE_CFG[v][key].forEach(val=>{ if(val<min) min=val; if(val>max) max=val; });
+    });
+  });
+  const step = niceStep(max-min);
+  return { min: Math.floor(min/step)*step, max: Math.ceil(max/step)*step, step };
+}
+const POP1_GROUP_RANGE = pop1GroupRange();
+function render1(){
+  document.getElementById("body1toggle").innerHTML = "";
+
+  if(!isOverview() && !isMulti()){
+    const c = VILLAGE_CFG[state.village];
+    const i = state.yearIndex;
+    mountChart("body1", { type:"doughnut", data:{
+      labels:["男","女"], datasets:[{ data:[c.maleSeries[i], c.femaleSeries[i]], backgroundColor:[COLOR.male, COLOR.female], borderWidth:0 }]
+    }, options: baseOptions({
+      cutout:"68%",
+      plugins:{ legend:{position:"bottom", labels:{color:"#54708c", font:{family:"Noto Sans TC", size:11}}},
+        tooltip: baseOptions().plugins.tooltip },
+      scales:{}
+    })});
+    document.getElementById("body1").insertAdjacentHTML("beforeend",
+      `<div class="donut-center">
+        <div class="dc-label">總人數</div>
+        <div class="dc-value">${c.totalSeries[i]}</div>
+        <div class="dc-sub">性別比 ${c.sexRatioSeries[i]}</div>
+      </div>`);
+  } else if(!isOverview() && isMulti()){
+    const c = VILLAGE_CFG[state.village];
+    const range1 = niceAxisFromValues([...c.totalSeries, ...c.maleSeries, ...c.femaleSeries]);
+    mountChart("body1", { type:"line", data:{ labels:YEARS, datasets:[
+      { label:"總人數", data:c.totalSeries, borderColor:COLOR.gold, backgroundColor:"transparent", tension:.3 },
+      { label:"男", data:c.maleSeries, borderColor:COLOR.male, backgroundColor:"transparent", tension:.3 },
+      { label:"女", data:c.femaleSeries, borderColor:COLOR.female, backgroundColor:"transparent", tension:.3 }
+    ]}, options: baseOptions({ scales:{ x:{ticks:{color:tickColor,font:baseFont},grid:{color:gridColor}}, y:{ min:range1.min, max:range1.max, ticks:{color:tickColor,font:baseFont,precision:0,stepSize:range1.step},grid:{color:gridColor}} } }, {x:"年份", y:"人數"}) });
+  } else if(isOverview() && !isMulti()){
+    const i=state.yearIndex;
+    const range1b = niceAxisFromValues([...VILLAGES.map(v=>VILLAGE_CFG[v].maleSeries[i]), ...VILLAGES.map(v=>VILLAGE_CFG[v].femaleSeries[i])]);
+    mountChart("body1", { type:"bar", data:{ labels:VILLAGES, datasets:[
+      { label:"男", data:VILLAGES.map(v=>VILLAGE_CFG[v].maleSeries[i]), backgroundColor:COLOR.male },
+      { label:"女", data:VILLAGES.map(v=>VILLAGE_CFG[v].femaleSeries[i]), backgroundColor:COLOR.female }
+    ]}, options: baseOptions({ scales:{ x:{ticks:{color:tickColor,font:baseFont},grid:{color:gridColor}}, y:{ min:range1b.min, max:range1b.max, ticks:{color:tickColor,font:baseFont,precision:0,stepSize:range1b.step},grid:{color:gridColor}} } }, {x:"村里", y:"人數"}) });
+  } else {
+    document.getElementById("body1toggle").innerHTML = `<div class="toggle-center">
+      <button data-mode="total" class="${pop1Mode==='total'?'active':''}">總人數</button>
+      <button data-mode="male" class="${pop1Mode==='male'?'active':''}">男</button>
+      <button data-mode="female" class="${pop1Mode==='female'?'active':''}">女</button>
+    </div>`;
+    document.querySelectorAll("#body1toggle button").forEach(btn=>{
+      btn.addEventListener("click", ()=>{ pop1Mode = btn.dataset.mode; render1(); });
+    });
+    const seriesKey = pop1Mode==='total' ? 'totalSeries' : (pop1Mode==='male' ? 'maleSeries' : 'femaleSeries');
+    const seriesLabel = pop1Mode==='total' ? '總人數' : (pop1Mode==='male' ? '男性人數' : '女性人數');
+    mountChart("body1", { type:"line", data:{ labels:YEARS, datasets:VILLAGES.map(v=>({
+      label:v+" "+seriesLabel, data:VILLAGE_CFG[v][seriesKey], borderColor:COLOR.villages[v], backgroundColor:"transparent", tension:.3
+    })) }, options: baseOptions({ scales:{ x:{ ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} },
+      y:{ min:POP1_GROUP_RANGE.min, max:POP1_GROUP_RANGE.max, ticks:{color:tickColor,font:baseFont,precision:0,stepSize:POP1_GROUP_RANGE.step}, grid:{color:gridColor} } } }, {x:"年份", y:"人數"}) });
+  }
+}
+
+function genderAgeLegendHTML(){
+  return `<div class="ga-legend">
+    <div class="ga-legend-row">
+      <span class="ga-legend-item" data-idx="0"><span class="dot" style="background:${MALE_SHADES.young}"></span>幼年 男</span>
+      <span class="ga-legend-item" data-idx="1"><span class="dot" style="background:${MALE_SHADES.adult}"></span>青壯年 男</span>
+      <span class="ga-legend-item" data-idx="2"><span class="dot" style="background:${MALE_SHADES.old}"></span>老年 男</span>
+    </div>
+    <div class="ga-legend-row">
+      <span class="ga-legend-item" data-idx="3"><span class="dot" style="background:${FEMALE_SHADES.young}"></span>幼年 女</span>
+      <span class="ga-legend-item" data-idx="4"><span class="dot" style="background:${FEMALE_SHADES.adult}"></span>青壯年 女</span>
+      <span class="ga-legend-item" data-idx="5"><span class="dot" style="background:${FEMALE_SHADES.old}"></span>老年 女</span>
+    </div>
+  </div>`;
+}
+function bindGenderAgeLegend(containerId, chartId){
+  const chart = chartRegistry[chartId];
+  if(!chart) return;
+  document.querySelectorAll(`#${containerId} .ga-legend-item`).forEach(item=>{
+    const idx = parseInt(item.dataset.idx, 10);
+    item.style.cursor = "pointer";
+    const visible = chart.isDatasetVisible(idx);
+    item.style.opacity = visible ? "1" : "0.35";
+    item.addEventListener("click", ()=>{
+      const nowVisible = chart.isDatasetVisible(idx);
+      chart.setDatasetVisibility(idx, !nowVisible);
+      chart.update();
+      item.style.opacity = !nowVisible ? "1" : "0.35";
+    });
+  });
+}
+const AGE3_LABELS = ["0-14歲","15-64歲","65歲以上"];
+const AGE5_BANDS = ["0-4","5-9","10-14","15-19","20-24","25-29","30-34","35-39","40-44","45-49",
+  "50-54","55-59","60-64","65-69","70-74","75-79","80-84","85-89","90-94","95-99","100+"];
+
+let pop2Gender = "male", pop2Age = "old";
+function age3GroupRangeFor(ageKey){
+  let min=0, max=0;
+  [ageKey+"_m", ageKey+"_f"].forEach(key=>{
+    VILLAGES.forEach(v=>{
+      VILLAGE_CFG[v].age3GenderSeries[key].forEach(val=>{ if(val<min) min=val; if(val>max) max=val; });
+    });
+  });
+  const step = niceStep(max-min);
+  return { min: Math.floor(min/step)*step, max: Math.ceil(max/step)*step, step };
+}
+const AGE3_GROUP_RANGES = {
+  young: age3GroupRangeFor("young"),
+  adult: age3GroupRangeFor("adult"),
+  old: age3GroupRangeFor("old")
+};
+function render2(){
+  const note = document.getElementById("body2note");
+  note.innerHTML = AGE_DEF_NOTE;
+  const info2 = document.getElementById("info-src2");
+  info2.innerHTML = (!isOverview() && !isMulti())
+    ? "資料來源：社會經濟資料開放平台－臺東縣村里行政區三段年齡組性別人口統計<br>※5歲年齡組細分圖另取自社會經濟資料開放平台－臺東縣村里行政區五歲年齡組人口統計"
+    : "資料來源：社會經濟資料開放平台－臺東縣村里行政區三段年齡組性別人口統計";
+  if(!isOverview() && !isMulti()){
+    const c = VILLAGE_CFG[state.village];
+    const i = state.yearIndex;
+    document.getElementById("body2").innerHTML = `<div class="chart-wrap" id="body2main" style="height:170px"></div>
+      <div class="legend-row" style="margin:6px 0 10px">${AGE_DEF_NOTE}</div>
+      <div class="sub-heading">5 歲年齡組人口分布（不分性別，${YEARS[i]} 年）</div>
+      <div class="chart-wrap" id="body2sub" style="height:130px"></div>`;
+    const g = c.age3GenderSeries;
+    const male = [-g.young_m[i], -g.adult_m[i], -g.old_m[i]];
+    const female = [g.young_f[i], g.adult_f[i], g.old_f[i]];
+    mountChart("body2main", { type:"bar", data:{ labels:["幼年","青壯年","老年"], datasets:[
+      { label:"男", data:male, backgroundColor:COLOR.male },
+      { label:"女", data:female, backgroundColor:COLOR.female }
+    ]}, options: baseOptions({
+      indexAxis:"y",
+      scales:{ x:{ stacked:false, ticks:{color:tickColor, font:baseFont, callback:v=>Math.abs(v)}, grid:{color:gridColor} },
+               y:{ stacked:true, ticks:{color:tickColor, font:baseFont}, grid:{color:gridColor} } },
+      plugins:{ legend: baseOptions().plugins.legend, tooltip:{ callbacks:{ label:(ctx)=> `${ctx.dataset.label}: ${Math.abs(ctx.raw)}` }, backgroundColor:"#ffffff", titleColor:"#10233b", bodyColor:"#54708c" } }
+    }, {x:"人數", y:"年齡層"})});
+    mountChart("body2sub", { type:"bar", data:{ labels:AGE5_BANDS, datasets:[
+      { data:c.age5Series[i], backgroundColor:COLOR.teal }
+    ]}, options: baseOptions({ plugins:{ legend:{display:false}, tooltip: baseOptions().plugins.tooltip } }, {x:"年齡組", y:"人數"}) });
+    note.innerHTML = "";
+  } else if(!isOverview() && isMulti()){
+    document.getElementById("body2").innerHTML = `<div class="chart-wrap" id="body2main"></div>${genderAgeLegendHTML()}`;
+    const c = VILLAGE_CFG[state.village];
+    const g = c.age3GenderSeries;
+    mountChart("body2main", { type:"bar", data:{ labels:YEARS, datasets:[
+      { label:"幼年 男", data:g.young_m.map(v=>-v), backgroundColor:MALE_SHADES.young, stack:"s" },
+      { label:"青壯年 男", data:g.adult_m.map(v=>-v), backgroundColor:MALE_SHADES.adult, stack:"s" },
+      { label:"老年 男", data:g.old_m.map(v=>-v), backgroundColor:MALE_SHADES.old, stack:"s" },
+      { label:"幼年 女", data:g.young_f, backgroundColor:FEMALE_SHADES.young, stack:"s" },
+      { label:"青壯年 女", data:g.adult_f, backgroundColor:FEMALE_SHADES.adult, stack:"s" },
+      { label:"老年 女", data:g.old_f, backgroundColor:FEMALE_SHADES.old, stack:"s" }
+    ]}, options: baseOptions({
+      scales:{ x:{ stacked:true, ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} },
+               y:{ stacked:true, ticks:{color:tickColor,font:baseFont, callback:v=>Math.abs(v)}, grid:{color:gridColor} } },
+      plugins:{ legend:{ display:false },
+        tooltip:{ callbacks:{ label:(ctx)=> `${ctx.dataset.label}: ${Math.abs(ctx.raw)}` }, backgroundColor:"#ffffff", titleColor:"#10233b", bodyColor:"#54708c" } }
+    }, {x:"年份", y:"人數"})});
+    bindGenderAgeLegend("body2","body2main");
+    note.innerHTML = AGE_DEF_NOTE;
+  } else if(isOverview() && !isMulti()){
+    document.getElementById("body2").innerHTML = `<div class="chart-wrap" id="body2main"></div>${genderAgeLegendHTML()}`;
+    const i=state.yearIndex;
+    mountChart("body2main", { type:"bar", data:{ labels:VILLAGES, datasets:[
+      { label:"幼年 男", data:VILLAGES.map(v=>-VILLAGE_CFG[v].age3GenderSeries.young_m[i]), backgroundColor:MALE_SHADES.young, stack:"s" },
+      { label:"青壯年 男", data:VILLAGES.map(v=>-VILLAGE_CFG[v].age3GenderSeries.adult_m[i]), backgroundColor:MALE_SHADES.adult, stack:"s" },
+      { label:"老年 男", data:VILLAGES.map(v=>-VILLAGE_CFG[v].age3GenderSeries.old_m[i]), backgroundColor:MALE_SHADES.old, stack:"s" },
+      { label:"幼年 女", data:VILLAGES.map(v=>VILLAGE_CFG[v].age3GenderSeries.young_f[i]), backgroundColor:FEMALE_SHADES.young, stack:"s" },
+      { label:"青壯年 女", data:VILLAGES.map(v=>VILLAGE_CFG[v].age3GenderSeries.adult_f[i]), backgroundColor:FEMALE_SHADES.adult, stack:"s" },
+      { label:"老年 女", data:VILLAGES.map(v=>VILLAGE_CFG[v].age3GenderSeries.old_f[i]), backgroundColor:FEMALE_SHADES.old, stack:"s" }
+    ]}, options: baseOptions({
+      scales:{ x:{ stacked:true, ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} },
+               y:{ stacked:true, ticks:{color:tickColor,font:baseFont, callback:v=>Math.abs(v)}, grid:{color:gridColor} } },
+      plugins:{ legend:{ display:false },
+        tooltip:{ callbacks:{ label:(ctx)=> `${ctx.dataset.label}: ${Math.abs(ctx.raw)}` }, backgroundColor:"#ffffff", titleColor:"#10233b", bodyColor:"#54708c" } }
+    }, {x:"村里", y:"人數"})});
+    bindGenderAgeLegend("body2","body2main");
+    note.innerHTML = AGE_DEF_NOTE;
+  } else {
+    const genderOptions = [["male","男"],["female","女"]];
+    const ageOptions = [["young","幼年"],["adult","青壯年"],["old","老年"]];
+    document.getElementById("body2").innerHTML = `
+      <div class="toggle-pair">
+        <div class="toggle-center" id="genderToggle">${genderOptions.map(([k,l])=>`<button data-k="${k}" class="${pop2Gender===k?'active':''}">${l}</button>`).join("")}</div>
+        <div class="toggle-center" id="ageToggle">${ageOptions.map(([k,l])=>`<button data-k="${k}" class="${pop2Age===k?'active':''}">${l}</button>`).join("")}</div>
+      </div>
+      <div class="chart-wrap" id="body2main"></div>`;
+    document.querySelectorAll("#genderToggle button").forEach(btn=> btn.addEventListener("click", ()=>{ pop2Gender=btn.dataset.k; render2(); }));
+    document.querySelectorAll("#ageToggle button").forEach(btn=> btn.addEventListener("click", ()=>{ pop2Age=btn.dataset.k; render2(); }));
+
+    const key = pop2Age + "_" + (pop2Gender==="male" ? "m" : "f");
+    const ageLabelMap = { young:"幼年 (0-14歲)", adult:"青壯年 (15-64歲)", old:"老年 (65歲以上)" };
+    const genderLabel = pop2Gender==="male" ? "男性" : "女性";
+    mountChart("body2main", { type:"line", data:{ labels:YEARS, datasets: VILLAGES.map(v=>({
+      label:v, data: VILLAGE_CFG[v].age3GenderSeries[key], borderColor:COLOR.villages[v], backgroundColor:"transparent", tension:.3
+    })) }, options: baseOptions({ scales:{ x:{ ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} },
+      y:{ min:AGE3_GROUP_RANGES[pop2Age].min, max:AGE3_GROUP_RANGES[pop2Age].max, ticks:{color:tickColor,font:baseFont,precision:0,stepSize:AGE3_GROUP_RANGES[pop2Age].step}, grid:{color:gridColor} } } }, {x:"年份", y:"人數"}) });
+    note.innerHTML = AGE_DEF_NOTE;
+  }
+}
+
+function arrowHTML(cur, prev, reversed){
+  if(prev===undefined || prev===null || cur===prev) return `<span class="arrow-flat">－</span>`;
+  const up = cur > prev;
+  const isGreen = reversed ? !up : up;
+  return `<span class="${isGreen?'arrow-good':'arrow-bad'}">${up?'▲':'▼'}</span>`;
+}
+function personIcon(color){
+  return `<svg viewBox="0 0 20 28" width="13" height="18"><circle cx="10" cy="6" r="5" fill="${color}"/><rect x="3" y="13" width="14" height="14" rx="6" fill="${color}"/></svg>`;
+}
+function noteWithInfo(shortNote, detailHtml, uid){
+  return `<div class="mini-note-row"><span class="mini-note-text">${shortNote}</span><button class="info-btn" type="button" data-info="${uid}">i</button></div>
+    <div class="info-detail" id="info-${uid}" style="display:none">${detailHtml}</div>`;
+}
+function bindInfoButtons(el){ /* no-op: handled by global delegated listener below */ }
+function pictograph10(youngPct, oldPct){
+  const youngN = Math.max(0, Math.min(10, Math.round(youngPct/10)));
+  const oldN = Math.max(0, Math.min(10-youngN, Math.round(oldPct/10)));
+  const emptyN = Math.max(0, 10 - youngN - oldN);
+  let icons = "";
+  for(let i=0;i<youngN;i++) icons += personIcon(COLOR.teal);
+  for(let i=0;i<oldN;i++) icons += personIcon(COLOR.rose);
+  for(let i=0;i<emptyN;i++) icons += personIcon("#dbe2e9");
+  return `<div class="picto-row">${icons}</div>
+    <div class="picto-values"><span style="color:${COLOR.teal}">●</span> 扶幼 ${youngPct}% <span style="color:${COLOR.rose}">●</span> 扶老 ${oldPct}%</div>`;
+}
+function statBigNumberBlock(el, label, value, unit){
+  el.innerHTML = `<div class="stat-label">${label}</div><div class="stat-value">${value}<small>${unit}</small></div>`;
+}
+function statVillageListBlock(el, label, values, unit){
+  el.innerHTML = `<div class="stat-label">${label}</div>` + VILLAGES.map((v,idx)=>
+    `<div class="stat-row"><span>${v}</span><b>${values[idx]}${unit}</b></div>`).join("");
+}
+function statMiniChart(el, label, datasets){
+  el.innerHTML = `<div class="stat-label">${label}</div><div class="mini-canvas-wrap"><canvas></canvas></div>`;
+  const canvas = el.querySelector("canvas");
+  const id = "mini-"+Math.random().toString(36).slice(2);
+  canvas.id = id;
+  const chart = new Chart(canvas, { type:"line", data:{ labels:YEARS, datasets }, options:{
+    responsive:true, maintainAspectRatio:false,
+    plugins:{ legend:{display:datasets.length>1, labels:{color:"#54708c", font:{family:"Noto Sans TC", size:9}, boxWidth:7}}, tooltip:{enabled:true} },
+    scales:{ x:{ ticks:{color:tickColor, font:{family:"IBM Plex Mono", size:8.5}}, grid:{display:false} }, y:{ ticks:{color:tickColor, font:{family:"IBM Plex Mono", size:8.5}}, grid:{color:gridColor} } }
+  }});
+  chartRegistry[id]=chart;
+}
+function iconPictogram(el, label, youngRatio, oldRatio){
+  const youngCount = Math.round(youngRatio/4);
+  const oldCount = Math.round(oldRatio/4);
+  el.innerHTML = `<div class="stat-label">${label}</div>
+    <div class="stat-row"><span>扶幼比</span><b>${youngRatio}</b></div>
+    <div class="icon-row">${Array(youngCount).fill(`<span class="ic" style="background:${COLOR.teal}"></span>`).join("")}</div>
+    <div class="stat-row" style="margin-top:4px"><span>扶老比</span><b>${oldRatio}</b></div>
+    <div class="icon-row">${Array(oldCount).fill(`<span class="ic" style="background:${COLOR.rose}"></span>`).join("")}</div>`;
+}
+let depTab = "young";
+const DEP_TABS = [["young","扶幼"],["old","扶老"],["total","扶養比"]];
+
+function renderDepMulti(el, c, villagesList){
+  el.innerHTML = `<div class="stat-label">${c ? `扶幼／扶老／扶養比（${state.village} vs 比較對象）` : "扶幼／扶老／扶養比（三村 vs 比較對象）"}</div>
+    <div class="idx-tabs">${DEP_TABS.map(([k,l])=>`<button data-k="${k}" class="${depTab===k?'active':''}">${l}</button>`).join("")}</div>
+    <div class="mini-canvas-wrap"><canvas></canvas></div>`;
+  el.querySelectorAll(".idx-tabs button").forEach(btn=> btn.addEventListener("click", ()=>{ depTab=btn.dataset.k; render3(); }));
+  const key = depTab==="young" ? "dependYoungSeries" : depTab==="old" ? "dependOldSeries" : "dependTotalSeries";
+  const metricKey = depTab==="young" ? "dependYoung" : depTab==="old" ? "dependOld" : "dependTotal";
+  const datasets = c
+    ? [ { label:state.village, data:c[key], borderColor:COLOR.blue, backgroundColor:"transparent", tension:.3 },
+        ...compareDatasets(metricKey) ]
+    : [ ...villagesList.map(v=>({ label:v, data:VILLAGE_CFG[v][key], borderColor:COLOR.villages[v], backgroundColor:"transparent", tension:.3 })),
+        ...compareDatasets(metricKey) ];
+  const canvas = el.querySelector("canvas");
+  const id = "mini-"+Math.random().toString(36).slice(2);
+  canvas.id = id;
+  const chart = new Chart(canvas, { type:"line", data:{ labels:YEARS, datasets }, options:{
+    responsive:true, maintainAspectRatio:false,
+    plugins:{ legend:{display:true, labels:{color:"#54708c", font:{family:"Noto Sans TC", size:8.5}, boxWidth:6}}, tooltip:{enabled:true} },
+    scales:{ x:{ ticks:{color:tickColor, font:{family:"IBM Plex Mono", size:8}}, grid:{display:false} }, y:{ ticks:{color:tickColor, font:{family:"IBM Plex Mono", size:8}}, grid:{color:gridColor} } }
+  }});
+  chartRegistry[id]=chart;
+}
+
+function renderDepOverviewSingle(el, i, prevI){
+  el.innerHTML = `<div class="stat-label">扶幼／扶老比</div><div class="mini-canvas-wrap"><canvas></canvas></div><div class="legend-row" id="depArrowRow" style="margin-top:6px"></div>`;
+  const canvas = el.querySelector("canvas");
+  const id = "mini-"+Math.random().toString(36).slice(2);
+  canvas.id = id;
+  const chart = new Chart(canvas, { type:"bar", data:{ labels:VILLAGES, datasets:[
+    { label:"扶幼", data:VILLAGES.map(v=>VILLAGE_CFG[v].dependYoungSeries[i]), backgroundColor:COLOR.teal, stack:"s" },
+    { label:"扶老", data:VILLAGES.map(v=>VILLAGE_CFG[v].dependOldSeries[i]), backgroundColor:COLOR.rose, stack:"s" }
+  ]}, options:{
+    responsive:true, maintainAspectRatio:false,
+    plugins:{ legend:{labels:{color:"#54708c", font:{family:"Noto Sans TC", size:9}, boxWidth:8}}, tooltip:{enabled:true} },
+    scales:{ x:{ stacked:true, ticks:{color:tickColor, font:{family:"IBM Plex Mono", size:9}}, grid:{display:false}, title:axisTitle("村里") }, y:{ stacked:true, ticks:{color:tickColor, font:{family:"IBM Plex Mono", size:9}}, grid:{color:gridColor}, title:axisTitle("%") } }
+  }});
+  chartRegistry[id]=chart;
+  document.getElementById("depArrowRow").innerHTML = VILLAGES.map(v=>{
+    const arr = VILLAGE_CFG[v].dependTotalSeries;
+    return `<span>${v} ${arr[i]}${arrowHTML(arr[i], prevI!==null?arr[prevI]:null, true)}</span>`;
+  }).join("");
+  el.insertAdjacentHTML("beforeend", noteWithInfo("▲紅＝上升<br>▼綠＝下降",
+    `扶幼比 ＝ 0-14歲 ÷ 15-64歲 × 100<br>扶老比 ＝ 65歲以上 ÷ 15-64歲 × 100<br>扶養比 ＝ 扶幼比 ＋ 扶老比`, "depend-ov"));
+  bindInfoButtons(el);
+}
+
+function statVillageListArrow(el, label, seriesFn, i, prevI, unit, reversed, note){
+  el.innerHTML = `<div class="stat-label">${label}</div>` + VILLAGES.map(v=>{
+    const arr = seriesFn(v);
+    return `<div class="stat-row"><span>${v}</span><b>${arr[i]}${unit}${arrowHTML(arr[i], prevI!==null?arr[prevI]:null, reversed)}</b></div>`;
+  }).join("") + (note ? `<div class="mini-note">${note}</div>` : "");
+}
+
+let card3Stat = "density"; // ③人口指標選單目前選的指標，預設人口密度
+const CARD3_STAT_KEYS = ["density","aging","household","depend"];
+function bindCard3Tabs(){
+  const tabsEl = document.getElementById("card3Tabs");
+  if(!tabsEl) return;
+  tabsEl.querySelectorAll("button").forEach(btn=>{
+    btn.classList.toggle("active", btn.dataset.stat===card3Stat);
+    btn.onclick = ()=>{ card3Stat = btn.dataset.stat; render3(); layoutMasonry(); };
+  });
+}
+function render3(){
+  const density = document.getElementById("s-density");
+  const aging = document.getElementById("s-aging");
+  const household = document.getElementById("s-household");
+  const depend = document.getElementById("s-depend");
+  const i = state.yearIndex;
+  const info3 = document.getElementById("info-src3");
+  info3.innerHTML = "資料來源：社會經濟資料開放平台－臺東縣村里人口指標（戶數取自臺東縣村里人口統計）"
+    + (isMulti() ? `<br>※「全縣」／各鄉鎮平均計算方式：人口密度為總人口除以反推的總面積；戶數為所有村里戶數之平均；老化指數、扶老/幼/養比則以轄下各村里加總後的人口數重新換算，並非村里數字的簡單平均。<br>※可自選比較對象：預設為「全縣平均」，也可勾選其他鄉鎮（比較該鄉平均或指定村里），計算方式與「全縣」相同。` : "");
+  const prevI = i>0 ? i-1 : null;
+  const statGridEl = document.querySelector("#card3 .stat-grid");
+  // 除了「單村＋單時期」以外都改用選單模式：只顯示選中的那個指標，卡片才能維持單欄寬度
+  const useSelector = isOverview() || isMulti();
+  const tabsEl = document.getElementById("card3Tabs");
+  if(tabsEl) tabsEl.style.display = useSelector ? "flex" : "none";
+  if(useSelector){
+    statGridEl.classList.remove("wide-depend", "stat-grid-full");
+    statGridEl.classList.add("single-stat");
+    bindCard3Tabs();
+  } else {
+    statGridEl.classList.remove("single-stat");
+  }
+  document.getElementById("compareWidgetSlot").style.display = isMulti() ? "block" : "none";
+
+  if(!isOverview() && !isMulti()){
+    const c = VILLAGE_CFG[state.village];
+    density.innerHTML = `<div class="stat-label">人口密度</div><div class="stat-value">${c.densitySeries[i]}<small> 人/km²</small>${arrowHTML(c.densitySeries[i], prevI!==null?c.densitySeries[prevI]:null, false)}</div>
+      <div class="mini-note">▲綠＝上升<br>▼紅＝下降</div>`;
+    household.innerHTML = `<div class="stat-label">戶數</div><div class="stat-value">${c.householdSeries[i]}<small> 戶</small>${arrowHTML(c.householdSeries[i], prevI!==null?c.householdSeries[prevI]:null, false)}</div>
+      <div class="mini-note">▲綠＝增加<br>▼紅＝減少</div>`;
+    aging.innerHTML = `<div class="stat-label">老化指數</div><div class="stat-value">${c.agingSeries[i]}<small>%</small>${arrowHTML(c.agingSeries[i], prevI!==null?c.agingSeries[prevI]:null, true)}</div>
+      ${noteWithInfo("▲紅＝上升<br>▼綠＝下降", "老化指數 ＝ 65歲以上人口 ÷ 0-14歲人口 × 100", "aging")}`;
+    depend.innerHTML = `<div class="stat-label">扶養負擔 ${arrowHTML(c.dependTotalSeries[i], prevI!==null?c.dependTotalSeries[prevI]:null, true)}</div>` + pictograph10(c.dependYoungSeries[i], c.dependOldSeries[i]) +
+      noteWithInfo("▲紅＝上升<br>▼綠＝下降",
+        `扶幼比 ＝ 0-14歲 ÷ 15-64歲 × 100<br>扶老比 ＝ 65歲以上 ÷ 15-64歲 × 100<br>扶養比 ＝ 扶幼比 ＋ 扶老比`, "depend");
+    bindInfoButtons(aging); bindInfoButtons(depend);
+  } else if(!isOverview() && isMulti()){
+    const c = VILLAGE_CFG[state.village];
+    statMiniChart(density, `人口密度（${state.village} vs 比較對象）`, [
+      { label:state.village, data:c.densitySeries, borderColor:COLOR.blue, backgroundColor:"transparent", tension:.3 },
+      ...compareDatasets("density")
+    ]);
+    statMiniChart(household, `戶數（${state.village} vs 比較對象）`, [
+      { label:state.village, data:c.householdSeries, borderColor:COLOR.blue, backgroundColor:"transparent", tension:.3 },
+      ...compareDatasets("household")
+    ]);
+    statMiniChart(aging, `老化指數（${state.village} vs 比較對象）`, [
+      { label:state.village, data:c.agingSeries, borderColor:COLOR.blue, backgroundColor:"transparent", tension:.3 },
+      ...compareDatasets("aging")
+    ]);
+    renderDepMulti(depend, c, null);
+  } else if(isOverview() && !isMulti()){
+    statVillageListArrow(density, "人口密度（人/km²）", v=>VILLAGE_CFG[v].densitySeries, i, prevI, "", false, "▲綠＝上升<br>▼紅＝下降");
+    statVillageListArrow(household, "戶數（戶）", v=>VILLAGE_CFG[v].householdSeries, i, prevI, "", false, "▲綠＝增加<br>▼紅＝減少");
+    statVillageListArrow(aging, "老化指數", v=>VILLAGE_CFG[v].agingSeries, i, prevI, "%", true);
+    aging.insertAdjacentHTML("beforeend", noteWithInfo("▲紅＝上升<br>▼綠＝下降", "老化指數 ＝ 65歲以上人口 ÷ 0-14歲人口 × 100", "aging-ov"));
+    bindInfoButtons(aging);
+    renderDepOverviewSingle(depend, i, prevI);
+  } else {
+    statMiniChart(density, "人口密度（三村 vs 比較對象）", [
+      ...VILLAGES.map(v=>({ label:v, data:VILLAGE_CFG[v].densitySeries, borderColor:COLOR.villages[v], backgroundColor:"transparent", tension:.3 })),
+      ...compareDatasets("density")
+    ]);
+    statMiniChart(household, "戶數（三村 vs 比較對象）", [
+      ...VILLAGES.map(v=>({ label:v, data:VILLAGE_CFG[v].householdSeries, borderColor:COLOR.villages[v], backgroundColor:"transparent", tension:.3 })),
+      ...compareDatasets("household")
+    ]);
+    statMiniChart(aging, "老化指數（三村 vs 比較對象）", [
+      ...VILLAGES.map(v=>({ label:v, data:VILLAGE_CFG[v].agingSeries, borderColor:COLOR.villages[v], backgroundColor:"transparent", tension:.3 })),
+      ...compareDatasets("aging")
+    ]);
+    renderDepMulti(depend, null, VILLAGES);
+  }
+  if(useSelector){
+    const blocks = { density, aging, household, depend };
+    CARD3_STAT_KEYS.forEach(key=>{ blocks[key].style.display = (key===card3Stat) ? "flex" : "none"; });
+  } else {
+    [density, aging, household, depend].forEach(el=> el.style.display = "");
+  }
+  [density, aging, household, depend].forEach(addMiniExpandBtn);
+}
+function addMiniExpandBtn(el){
+  el.style.position = "relative";
+  const btn = document.createElement("button");
+  btn.className = "expand-btn-mini";
+  btn.type = "button";
+  btn.title = "放大這張圖表";
+  btn.textContent = "⛶";
+  el.appendChild(btn);
+}
+
+const EDU_CATS = ["不識字","自修","國小","國中","高中職","專科","大學","碩士","博士"];
+const AGE_BANDS = ["15-24","25-34","35-44","45-54","55-64","65+"];
+function heatColor(val, max){
+  const t = Math.min(1, val/max);
+  const r = Math.round(238 - t*197), g = Math.round(243 - t*158), b = Math.round(250 - t*97);
+  return { bg:`rgb(${r},${g},${b})`, text: t>0.55 ? "#ffffff" : "#10233b" };
+}
+let eduBandIdx = 0;
+function renderRoseChart(el, categories, seriesByVillage, colors){
+  const cx=150, cy=150, maxR=112, labelR=132;
+  const n = categories.length;
+  const groupAngle = 360/n;
+  const villages = Object.keys(seriesByVillage);
+  const m = villages.length;
+  const gapDeg = 2;
+  const subAngle = (groupAngle - gapDeg*2) / m;
+  let maxVal = 0.0001;
+  villages.forEach(v=> seriesByVillage[v].forEach(val=>{ if(val>maxVal) maxVal=val; }));
+  function polar(r, angleDeg){
+    const rad = (angleDeg-90) * Math.PI/180;
+    return [(cx + r*Math.cos(rad)).toFixed(1), (cy + r*Math.sin(rad)).toFixed(1)];
+  }
+  let paths = "";
+  for(let ci=0; ci<n; ci++){
+    const groupStart = ci*groupAngle;
+    for(let vi=0; vi<m; vi++){
+      const v = villages[vi];
+      const val = seriesByVillage[v][ci];
+      const r = Math.max(3, val/maxVal*maxR);
+      const a0 = groupStart + gapDeg + vi*subAngle;
+      const a1 = a0 + subAngle;
+      const [x1,y1] = polar(r,a0);
+      const [x2,y2] = polar(r,a1);
+      const largeArc = (a1-a0)>180?1:0;
+      paths += `<path class="rose-wedge" data-village="${v}" data-cat="${categories[ci]}" data-val="${val}" data-color="${colors[v]}" d="M ${cx} ${cy} L ${x1} ${y1} A ${r.toFixed(1)} ${r.toFixed(1)} 0 ${largeArc} 1 ${x2} ${y2} Z" fill="${colors[v]}" opacity="0.88" stroke="#fff" stroke-width="0.6"></path>`;
+    }
+  }
+  let labels = "";
+  for(let ci=0; ci<n; ci++){
+    const mid = ci*groupAngle + groupAngle/2;
+    const [lx,ly] = polar(labelR, mid);
+    labels += `<text x="${lx}" y="${ly}" font-size="9.5" fill="#54708c" text-anchor="middle" dominant-baseline="middle">${categories[ci]}</text>`;
+  }
+  let grids = "";
+  [0.33,0.66,1].forEach(t=>{
+    grids += `<circle cx="${cx}" cy="${cy}" r="${(maxR*t).toFixed(1)}" fill="none" stroke="rgba(16,35,59,0.08)" stroke-width="1"/>`;
+  });
+  el.style.position = "relative";
+  el.innerHTML = `<svg viewBox="0 0 300 300" style="width:100%;height:100%">${grids}${paths}${labels}</svg>`;
+  bindRoseTooltip(el);
+}
+function bindRoseTooltip(el){
+  let tip = el.querySelector(".rose-tooltip");
+  if(!tip){
+    tip = document.createElement("div");
+    tip.className = "rose-tooltip";
+    tip.innerHTML = `<span class="rose-tip-dot"></span><span class="rose-tip-text"></span>`;
+    el.appendChild(tip);
+  }
+  const rect = ()=> el.getBoundingClientRect();
+  el.querySelectorAll(".rose-wedge").forEach(path=>{
+    path.addEventListener("mousemove", (e)=>{
+      const r = rect();
+      let x = e.clientX - r.left + 12;
+      let y = e.clientY - r.top + 12;
+      tip.querySelector(".rose-tip-dot").style.background = path.dataset.color;
+      tip.querySelector(".rose-tip-text").innerHTML = `<b>${path.dataset.village}</b> ${path.dataset.cat} ${path.dataset.val}%`;
+      tip.style.display = "flex";
+      // measure and clamp within container bounds
+      const tipWidth = tip.offsetWidth || 120;
+      const tipHeight = tip.offsetHeight || 28;
+      if(x + tipWidth > r.width) x = e.clientX - r.left - tipWidth - 12;
+      if(y + tipHeight > r.height) y = e.clientY - r.top - tipHeight - 12;
+      tip.style.left = x + "px";
+      tip.style.top = y + "px";
+    });
+    path.addEventListener("mouseleave", ()=>{ tip.style.display = "none"; });
+  });
+}
+const EDU_LINE_COLORS = ["#c0392b","#e67e22","#d4ac0d","#27ae60","#6f4e37","#2980b9","#5b4fcf","#9b59b6","#e84393"];
+function eduBandSelector(){
+  return `<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap">
+    <span class="legend-row" style="margin:0; flex-shrink:0">年齡</span>
+    <div class="idx-tabs" id="eduBandTabs" style="flex-wrap:wrap">${AGE_BANDS.map((b,idx)=>
+      `<button data-idx="${idx}" class="${eduBandIdx===idx?'active':''}">${b}</button>`).join("")}</div>
+  </div>`;
+}
+function bindEduBandSelector(){
+  document.querySelectorAll("#eduBandTabs button").forEach(btn=>{
+    btn.addEventListener("click", ()=>{ eduBandIdx = parseInt(btn.dataset.idx,10); render4(); });
+  });
+}
+function render4(){
+  const el = document.getElementById("body4");
+  if(!isOverview() && !isMulti()){
+    const c = VILLAGE_CFG[state.village];
+    const matrix = c.eduByYear[state.yearIndex];
+    const max = Math.max(...matrix.flat());
+    let html = `<table class="heat"><thead><tr><th></th>${EDU_CATS.map(e=>`<th>${e}</th>`).join("")}</tr></thead><tbody>`;
+    AGE_BANDS.forEach((band,ri)=>{
+      html += `<tr><th class="rowhead">${band}</th>${matrix[ri].map(v=>{ const col=heatColor(v,max); return `<td style="background:${col.bg};color:${col.text}">${v}</td>`; }).join("")}</tr>`;
+    });
+    html += `</tbody></table>`;
+    el.innerHTML = html;
+  } else if(!isOverview() && isMulti()){
+    el.innerHTML = `<div class="stat-label" style="margin-bottom:6px">教育程度趨勢（選擇年齡層）</div>${eduBandSelector()}<div class="chart-wrap" id="body4chart"></div>`;
+    bindEduBandSelector();
+    const c = VILLAGE_CFG[state.village];
+    const series = c.eduSeries[eduBandIdx];
+    mountChart("body4chart", {
+      type:"line", data:{ labels:YEARS, datasets: EDU_CATS.map((cat,idx)=>({
+        label:cat, data:series[idx], borderColor:EDU_LINE_COLORS[idx], backgroundColor:"transparent", tension:.3
+      })) }, options: baseOptions({ plugins:{ legend:{ position:"bottom", labels:{color:"#54708c", font:{family:"Noto Sans TC", size:9}, boxWidth:8} },
+        tooltip: baseOptions().plugins.tooltip } }, {x:"年份", y:"%"})
+    });
+  } else if(isOverview() && !isMulti()){
+    el.innerHTML = `${eduBandSelector()}
+      <div class="legend-row" style="justify-content:center">${VILLAGES.map(v=>`<span><span class="dot" style="background:${COLOR.villages[v]}"></span>${v}</span>`).join("")}</div>
+      <div id="roseWrap" style="width:100%;height:280px;margin-top:6px"></div>`;
+    bindEduBandSelector();
+    const i = state.yearIndex;
+    const seriesByVillage = {};
+    VILLAGES.forEach(v=> seriesByVillage[v] = REAL_EDU[v].eduByYear[i][eduBandIdx]);
+    renderRoseChart(document.getElementById("roseWrap"), EDU_CATS, seriesByVillage, COLOR.villages);
+  } else {
+    el.innerHTML = `<div class="placeholder-x"><div class="x-mark">✕</div>目前無適合三村 × 多時期比較之呈現方式<br>請切換上方「單時期」查看</div>`;
+  }
+}
+
+const MARITAL_LABELS = ["未婚","有偶","離婚","喪偶"];
+const MARITAL_COLORS = [COLOR.blue, COLOR.teal, COLOR.gold, COLOR.rose];
+const MARITAL7_KEYS = ["single","married_hetero","married_homo","divorced_hetero","divorced_homo","widowed_hetero","widowed_homo"];
+const MARITAL7_LABELS = { single:"未婚", married_hetero:"有偶(異性)", married_homo:"有偶(同性)", divorced_hetero:"離婚(異性)", divorced_homo:"離婚(同性)", widowed_hetero:"喪偶(異性)", widowed_homo:"喪偶(同性)" };
+const MARITAL7_COLORS = {
+  single: COLOR.blue,
+  married_hetero: COLOR.teal, married_homo: tint(COLOR.teal,0.55),
+  divorced_hetero: COLOR.gold, divorced_homo: tint(COLOR.gold,0.55),
+  widowed_hetero: COLOR.rose, widowed_homo: tint(COLOR.rose,0.55)
+};
+let maritalTab = "single";
+let maritalOverviewTab = "hetero";
+let maritalSingleTab = "hetero";
+function render5(){
+  const el = document.getElementById("body5");
+  if(!isOverview() && !isMulti()){
+    const m = REAL_MARITAL[state.village]; const i = state.yearIndex; const year = YEARS[i];
+    if(year <= 2018){
+      el.innerHTML = `<div class="chart-wrap" id="body5main"></div>`;
+      mountChart("body5main", { type:"bar", data:{ labels:["未婚","有偶","離婚","喪偶"], datasets:[{
+        data:[m.single[i], m.married_hetero[i], m.divorced_hetero[i], m.widowed_hetero[i]],
+        backgroundColor:[COLOR.blue, COLOR.teal, COLOR.gold, COLOR.rose]
+      }] }, options: baseOptions({ plugins:{ legend:{display:false}, tooltip: baseOptions().plugins.tooltip },
+        scales:{ x:{ ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} }, y:{ ticks:{color:tickColor,font:baseFont,precision:0}, grid:{color:gridColor} } } }, {x:"婚姻狀況", y:"人數"}) });
+    } else {
+      el.innerHTML = `<div class="idx-tabs" id="maritalSingleTabs"><button data-k="hetero" class="${maritalSingleTab==='hetero'?'active':''}">異性</button><button data-k="homo" class="${maritalSingleTab==='homo'?'active':''}">同性</button></div>
+        <div class="chart-wrap" id="body5main"></div>`;
+      document.querySelectorAll("#maritalSingleTabs button").forEach(btn=>{
+        btn.addEventListener("click", ()=>{ maritalSingleTab = btn.dataset.k; render5(); });
+      });
+      if(maritalSingleTab === "hetero"){
+        mountChart("body5main", { type:"bar", data:{ labels:["未婚","有偶","離婚","喪偶"], datasets:[{
+          data:[m.single[i], m.married_hetero[i], m.divorced_hetero[i], m.widowed_hetero[i]],
+          backgroundColor:[COLOR.blue, COLOR.teal, COLOR.gold, COLOR.rose]
+        }] }, options: baseOptions({ plugins:{ legend:{display:false}, tooltip: baseOptions().plugins.tooltip },
+          scales:{ x:{ ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} }, y:{ ticks:{color:tickColor,font:baseFont,precision:0}, grid:{color:gridColor} } } }, {x:"婚姻狀況", y:"人數"}) });
+      } else {
+        mountChart("body5main", { type:"bar", data:{ labels:["有偶","離婚","喪偶"], datasets:[{
+          data:[m.married_homo[i], m.divorced_homo[i], m.widowed_homo[i]],
+          backgroundColor:[tint(COLOR.teal,0.55), tint(COLOR.gold,0.55), tint(COLOR.rose,0.55)]
+        }] }, options: baseOptions({ plugins:{ legend:{display:false}, tooltip: baseOptions().plugins.tooltip },
+          scales:{ x:{ ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} }, y:{ min:0, ticks:{color:tickColor,font:baseFont,precision:0,stepSize:1}, grid:{color:gridColor} } } }, {x:"婚姻狀況", y:"人數"}) });
+      }
+    }
+  } else if(!isOverview() && isMulti()){
+    const m = REAL_MARITAL[state.village];
+    el.innerHTML = `<div class="chart-wrap" id="body5main"></div>`;
+    mountChart("body5main", { type:"line", data:{ labels:YEARS, datasets: MARITAL7_KEYS.map(k=>({
+      label:MARITAL7_LABELS[k], data:m[k], borderColor:MARITAL7_COLORS[k], backgroundColor:"transparent", tension:.3
+    })) }, options: baseOptions({
+      plugins:{ legend:{ position:"bottom", labels:{color:"#54708c", font:{family:"Noto Sans TC", size:9}, boxWidth:8} }, tooltip: baseOptions().plugins.tooltip },
+      scales:{ x:{ ticks:{color:tickColor, font:baseFont}, grid:{color:gridColor} }, y:{ ticks:{color:tickColor, font:baseFont, precision:0}, grid:{color:gridColor} } }
+    }, {x:"年份", y:"人數"}) });
+  } else if(isOverview() && !isMulti()){
+    const i = state.yearIndex; const year = YEARS[i];
+    if(year <= 2018){
+      el.innerHTML = `<div class="chart-wrap" id="body5main"></div>`;
+      mountChart("body5main", { type:"bar", data:{ labels:VILLAGES, datasets:[
+        { label:"未婚", data:VILLAGES.map(v=>REAL_MARITAL[v].single[i]), backgroundColor:COLOR.blue },
+        { label:"有偶", data:VILLAGES.map(v=>REAL_MARITAL[v].married_hetero[i]), backgroundColor:COLOR.teal },
+        { label:"離婚", data:VILLAGES.map(v=>REAL_MARITAL[v].divorced_hetero[i]), backgroundColor:COLOR.gold },
+        { label:"喪偶", data:VILLAGES.map(v=>REAL_MARITAL[v].widowed_hetero[i]), backgroundColor:COLOR.rose }
+      ]}, options: baseOptions({ scales:{ x:{ ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} }, y:{ ticks:{color:tickColor,font:baseFont,precision:0}, grid:{color:gridColor} } } }, {x:"村里", y:"人數"}) });
+    } else {
+      el.innerHTML = `<div class="idx-tabs" id="maritalOvTabs"><button data-k="hetero" class="${maritalOverviewTab==='hetero'?'active':''}">異性</button><button data-k="homo" class="${maritalOverviewTab==='homo'?'active':''}">同性</button></div>
+        <div class="chart-wrap" id="body5main"></div>`;
+      document.querySelectorAll("#maritalOvTabs button").forEach(btn=>{
+        btn.addEventListener("click", ()=>{ maritalOverviewTab = btn.dataset.k; render5(); });
+      });
+      const suffix = maritalOverviewTab === "hetero" ? "_hetero" : "_homo";
+      const datasets = maritalOverviewTab === "hetero"
+        ? [
+            { label:"未婚", data:VILLAGES.map(v=>REAL_MARITAL[v].single[i]), backgroundColor:COLOR.blue },
+            { label:"有偶", data:VILLAGES.map(v=>REAL_MARITAL[v]["married"+suffix][i]), backgroundColor:COLOR.teal },
+            { label:"離婚", data:VILLAGES.map(v=>REAL_MARITAL[v]["divorced"+suffix][i]), backgroundColor:COLOR.gold },
+            { label:"喪偶", data:VILLAGES.map(v=>REAL_MARITAL[v]["widowed"+suffix][i]), backgroundColor:COLOR.rose }
+          ]
+        : [
+            { label:"有偶", data:VILLAGES.map(v=>REAL_MARITAL[v]["married"+suffix][i]), backgroundColor:tint(COLOR.teal,0.55) },
+            { label:"離婚", data:VILLAGES.map(v=>REAL_MARITAL[v]["divorced"+suffix][i]), backgroundColor:tint(COLOR.gold,0.55) },
+            { label:"喪偶", data:VILLAGES.map(v=>REAL_MARITAL[v]["widowed"+suffix][i]), backgroundColor:tint(COLOR.rose,0.55) }
+          ];
+      mountChart("body5main", { type:"bar", data:{ labels:VILLAGES, datasets },
+        options: baseOptions({ scales:{ x:{ ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} },
+          y:{ min: maritalOverviewTab==="homo" ? 0 : undefined, ticks:{color:tickColor,font:baseFont,precision:0,stepSize: maritalOverviewTab==="homo"?1:undefined}, grid:{color:gridColor} } } }, {x:"村里", y:"人數"}) });
+    }
+  } else {
+    el.innerHTML = `<div class="idx-tabs" id="maritalTabs" style="flex-wrap:wrap">${MARITAL7_KEYS.map(k=>
+      `<button data-k="${k}" class="${maritalTab===k?'active':''}">${MARITAL7_LABELS[k]}</button>`).join("")}</div>
+      <div class="chart-wrap" id="body5main"></div>`;
+    document.querySelectorAll("#maritalTabs button").forEach(btn=>{
+      btn.addEventListener("click", ()=>{ maritalTab = btn.dataset.k; render5(); });
+    });
+    const isHomoTab = maritalTab.endsWith("_homo");
+    mountChart("body5main", { type:"line", data:{ labels:YEARS, datasets: VILLAGES.map(v=>({
+      label:v, data: REAL_MARITAL[v][maritalTab], borderColor:COLOR.villages[v], backgroundColor:"transparent", tension:.3
+    })) }, options: baseOptions({
+      scales:{ x:{ ticks:{color:tickColor, font:baseFont}, grid:{color:gridColor} },
+        y: isHomoTab
+          ? { min:0, max:10, ticks:{color:tickColor, font:baseFont, precision:0, stepSize:1}, grid:{color:gridColor} }
+          : { ticks:{color:tickColor, font:baseFont, precision:0}, grid:{color:gridColor} } }
+    }, {x:"年份", y:"人數"}) });
+  }
+}
+
+const PC_COLOR = { inc: tint(COLOR.teal,0.45), dec: tint("#b565a7",0.45), sub: tint(COLOR.gold,0.45), tot: tint(COLOR.blue,0.45) };
+const PC_LINE_BRIGHT = tint("#ffa726", 0.15);
+const ZERO_LINE_COLOR = "#9f1239";
+const barValueLabelsPlugin = {
+  id: "barValueLabels",
+  afterDatasetsDraw(chart, args, opts){
+    if(!opts) return;
+    const { ctx } = chart;
+    ctx.save();
+    ctx.font = "600 10.5px 'IBM Plex Mono', monospace";
+    ctx.fillStyle = opts.color || "#10233b";
+    ctx.textAlign = "center";
+    const groups = opts.groups || (opts.labels ? [{ datasetIndex: opts.datasetIndex||0, labels: opts.labels }] : []);
+    groups.forEach(g=>{
+      const meta = chart.getDatasetMeta(g.datasetIndex);
+      const extra = g.offset || 0;
+      meta.data.forEach((el, idx)=>{
+        const text = g.labels[idx];
+        if(text===undefined || text===null) return;
+        const topY = (el.base !== undefined) ? Math.min(el.y, el.base) : el.y;
+        ctx.fillText(text, el.x, topY - 6 - extra);
+      });
+    });
+    ctx.restore();
+  }
+};
+if(typeof Chart !== "undefined") Chart.register(barValueLabelsPlugin);
+const waterfallConnectorPlugin = {
+  id: "waterfallConnector",
+  afterDatasetsDraw(chart, args, opts){
+    if(!opts || !opts.enabled || !opts.connections) return;
+    const { ctx } = chart;
+    const yScale = chart.scales.y;
+    const meta = chart.getDatasetMeta(0);
+    ctx.save();
+    ctx.strokeStyle = opts.color || "#9fb0bf";
+    ctx.setLineDash([3,3]);
+    ctx.lineWidth = 1;
+    opts.connections.forEach(([i,j,value])=>{
+      const barI = meta.data[i], barJ = meta.data[j];
+      if(!barI || !barJ) return;
+      const yPixel = yScale.getPixelForValue(value);
+      ctx.beginPath();
+      ctx.moveTo(barI.x, yPixel);
+      ctx.lineTo(barJ.x, yPixel);
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
+};
+if(typeof Chart !== "undefined") Chart.register(waterfallConnectorPlugin);
+const zeroLinePlugin = {
+  id: "zeroLine",
+  afterDatasetsDraw(chart, args, opts){
+    if(!opts || !opts.enabled) return;
+    const yScale = chart.scales[opts.yAxisID || "y"];
+    if(!yScale) return;
+    const yPixel = yScale.getPixelForValue(0);
+    const { ctx, chartArea } = chart;
+    ctx.save();
+    ctx.strokeStyle = opts.color || ZERO_LINE_COLOR;
+    ctx.lineWidth = opts.width || 2;
+    ctx.beginPath();
+    ctx.moveTo(chartArea.left, yPixel);
+    ctx.lineTo(chartArea.right, yPixel);
+    ctx.stroke();
+    ctx.font = "700 10.5px 'IBM Plex Mono', monospace";
+    ctx.fillStyle = opts.color || ZERO_LINE_COLOR;
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    ctx.fillText("0", chartArea.left - 8, yPixel);
+    ctx.restore();
+  }
+};
+if(typeof Chart !== "undefined") Chart.register(zeroLinePlugin);
+function pcLabel(v){ return (v>=0?"+":"") + v + "人"; }
+let pc6Tab1 = "main";
+let pc6MultiTab = "total";
+let pc6OvSingleTab = "total";
+let pc6OvMultiTab = "total";
+let pc6OvMultiSub = "total";
+function niceStep(range, targetTicks=6){
+  if(range<=0) return 1;
+  const rough = range/targetTicks;
+  const mag = Math.pow(10, Math.floor(Math.log10(rough)));
+  const norm = rough/mag;
+  let nice;
+  if(norm<1.5) nice=1;
+  else if(norm<3) nice=2;
+  else if(norm<7) nice=5;
+  else nice=10;
+  return Math.max(1, Math.round(nice*mag));
+}
+function niceAxisFromValues(values){
+  const min = Math.min(0, ...values);
+  const max = Math.max(0, ...values);
+  const step = niceStep(max-min);
+  return { min: Math.floor(min/step)*step, max: Math.ceil(max/step)*step, step };
+}
+function groupRange(keys){
+  let min=0, max=0;
+  keys.forEach(k=>{
+    VILLAGES.forEach(v=>{
+      REAL_POPCHANGE[v][k].forEach(val=>{
+        if(val<min) min=val;
+        if(val>max) max=val;
+      });
+    });
+  });
+  const step = niceStep(max-min);
+  const niceMin = Math.floor(min/step)*step;
+  const niceMax = Math.ceil(max/step)*step;
+  return { min: niceMin, max: niceMax, step };
+}
+const NATURE_GROUP_RANGE = groupRange(["born","dead","nature"]);
+const SOCIAL_GROUP_RANGE = groupRange(["entry_p","exit_p","social"]);
+const NATURE_RATE_RANGE = groupRange(["birthRate","deathRate","natureRate"]);
+const SOCIAL_RATE_RANGE = groupRange(["entryRate","exitRate","socialRate"]);
+function pcLegend(){
+  return `<div class="legend-row" style="margin-top:8px;flex-wrap:wrap">
+    <span><span class="dot" style="background:${PC_COLOR.inc}"></span>增加項（出生/遷入/鄉內遷入）</span>
+    <span><span class="dot" style="background:${PC_COLOR.dec}"></span>減少項（死亡/遷出/鄉內遷出）</span>
+    <span><span class="dot" style="background:${PC_COLOR.sub}"></span>小計（自然/社會/村內淨增）</span>
+    <span><span class="dot" style="background:${PC_COLOR.tot}"></span>總增加</span>
+  </div>`;
+}
+const PC_TABS4 = [["total","總增減"],["nature","自然增加"],["social","社會增加"],["intra","鄉內流動"]];
+const waterfallConnectorGroupedPlugin = {
+  id: "waterfallConnectorGrouped",
+  afterDatasetsDraw(chart, args, opts){
+    if(!opts || !opts.enabled || !opts.connections) return;
+    const { ctx } = chart;
+    const yScale = chart.scales.y;
+    ctx.save();
+    ctx.strokeStyle = opts.color || "#9fb0bf";
+    ctx.setLineDash([3,3]);
+    ctx.lineWidth = 1;
+    opts.connections.forEach(({catIndex, fromDataset, toDataset, value})=>{
+      const barFrom = chart.getDatasetMeta(fromDataset).data[catIndex];
+      const barTo = chart.getDatasetMeta(toDataset).data[catIndex];
+      if(!barFrom || !barTo) return;
+      const yPixel = yScale.getPixelForValue(value);
+      ctx.beginPath();
+      ctx.moveTo(barFrom.x, yPixel);
+      ctx.lineTo(barTo.x, yPixel);
+      ctx.stroke();
+    });
+    ctx.restore();
+  }
+};
+if(typeof Chart !== "undefined") Chart.register(waterfallConnectorGroupedPlugin);
+function rateTableHTML(rateKey, label){
+  return `<div class="rate-row">
+    <div class="rate-row-label">${label}</div>
+    <div class="rate-row-values">${VILLAGES.map(v=>{
+      const val = REAL_POPCHANGE[v][rateKey][state.yearIndex];
+      return `<div class="rate-cell"><div class="rate-cell-name">${v}</div><div class="rate-cell-val">${val>=0?"+":""}${val}‰</div></div>`;
+    }).join("")}</div>
+  </div>`;
+}
+function renderGroupedWaterfall(catLabels, getV0, getV1, getV2, midOffset=0, rateInfo=null){
+  const el = document.getElementById("body6main");
+  el.innerHTML = `<div class="chart-wrap" id="body6grouped" style="height:260px"></div>` + (rateInfo ? rateTableHTML(rateInfo.key, rateInfo.label) : "");
+  const v0s = VILLAGES.map(getV0), v1s = VILLAGES.map(getV1), v2s = VILLAGES.map(getV2);
+  const data1 = VILLAGES.map((v,idx)=> [v0s[idx], v0s[idx]-v1s[idx]]);
+  const labels0 = v0s.map(v=>pcLabel(v));
+  const labels1 = v1s.map(v=>pcLabel(-v));
+  const labels2 = v2s.map(v=>pcLabel(v));
+  const connections = VILLAGES.map((v,idx)=> ({ catIndex:idx, fromDataset:0, toDataset:1, value:v0s[idx] }));
+  mountChart("body6grouped", { type:"bar", data:{ labels:VILLAGES, datasets:[
+    { label:catLabels[0], data:v0s, backgroundColor:PC_COLOR.inc },
+    { label:catLabels[1], data:data1, backgroundColor:PC_COLOR.dec },
+    { label:catLabels[2], data:v2s, backgroundColor:PC_COLOR.sub }
+  ]}, options: baseOptions({
+    plugins:{ legend: baseOptions().plugins.legend, tooltip: baseOptions().plugins.tooltip,
+      barValueLabels:{ groups:[ {datasetIndex:0,labels:labels0,offset:0}, {datasetIndex:1,labels:labels1,offset:midOffset}, {datasetIndex:2,labels:labels2,offset:0} ] },
+      zeroLine:{enabled:true,color:ZERO_LINE_COLOR,width:2},
+      waterfallConnectorGrouped:{enabled:true, connections}
+    },
+    scales:{ x:{ticks:{color:tickColor,font:baseFont},grid:{color:gridColor}}, y:{ticks:{color:tickColor,font:baseFont,precision:0,callback:v=>v===0?"":v},grid:{color:gridColor}} }
+  }, {x:"村里", y:"人數"}) });
+}
+function render6(){
+  const el = document.getElementById("body6");
+  if(!isOverview() && !isMulti()){
+    const p = REAL_POPCHANGE[state.village]; const i = state.yearIndex;
+    el.innerHTML = `<div class="idx-tabs" id="pc6Tabs1"><button data-k="main" class="${pc6Tab1==='main'?'active':''}">自然＋社會增減</button><button data-k="intra" class="${pc6Tab1==='intra'?'active':''}">鄉內流動</button></div>
+      <div class="chart-wrap" id="body6main"></div>${pcLegend()}`;
+    document.querySelectorAll("#pc6Tabs1 button").forEach(btn=> btn.addEventListener("click", ()=>{ pc6Tab1=btn.dataset.k; render6(); }));
+    if(pc6Tab1 === "main"){
+      const B=p.born[i], D=p.dead[i], N=p.nature[i], I=p.entry_p[i], O=p.exit_p[i], S=p.social[i], T=p.total[i];
+      const cats = ["出生","死亡","自然增加","遷入","遷出","社會增加","總增加"];
+      const data = [
+        [Math.min(0,B),Math.max(0,B)],
+        [Math.min(B,B-D),Math.max(B,B-D)],
+        [Math.min(0,N),Math.max(0,N)],
+        [Math.min(N,N+I),Math.max(N,N+I)],
+        [Math.min(N+I,N+I-O),Math.max(N+I,N+I-O)],
+        [Math.min(0,S),Math.max(0,S)],
+        [Math.min(0,T),Math.max(0,T)]
+      ];
+      const colors = [PC_COLOR.inc,PC_COLOR.dec,PC_COLOR.sub,PC_COLOR.inc,PC_COLOR.dec,PC_COLOR.sub,PC_COLOR.tot];
+      const labels7 = [pcLabel(B), pcLabel(-D), pcLabel(N), pcLabel(I), pcLabel(-O), pcLabel(S), pcLabel(T)];
+      const connections7 = [ [0,1,B], [3,4,N+I] ];
+      mountChart("body6main", { type:"bar", data:{ labels:cats, datasets:[{ data, backgroundColor:colors }] },
+        options: baseOptions({ plugins:{legend:{display:false}, tooltip: baseOptions().plugins.tooltip, barValueLabels:{ labels:labels7 }, zeroLine:{enabled:true,color:ZERO_LINE_COLOR,width:2}, waterfallConnector:{enabled:true, connections:connections7} },
+          scales:{ x:{ticks:{color:tickColor,font:baseFont},grid:{color:gridColor}}, y:{ticks:{color:tickColor,font:baseFont,precision:0,callback:v=>v===0?"":v},grid:{color:gridColor}} } }, {y:"人數"}) });
+    } else {
+      const EA=p.entry_addr[i], EX=p.exit_addr[i], IN=p.intra[i];
+      const cats = ["鄉內遷入","鄉內遷出","鄉內遷徙淨增"];
+      const data = [ [Math.min(0,EA),Math.max(0,EA)], [Math.min(EA,EA-EX),Math.max(EA,EA-EX)], [Math.min(0,IN),Math.max(0,IN)] ];
+      const colors = [PC_COLOR.inc,PC_COLOR.dec,PC_COLOR.sub];
+      const labels3 = [pcLabel(EA), pcLabel(-EX), pcLabel(IN)];
+      const connections3 = [ [0,1,EA] ];
+      mountChart("body6main", { type:"bar", data:{ labels:cats, datasets:[{ data, backgroundColor:colors }] },
+        options: baseOptions({ plugins:{legend:{display:false}, tooltip: baseOptions().plugins.tooltip, barValueLabels:{ labels:labels3 }, zeroLine:{enabled:true,color:ZERO_LINE_COLOR,width:2}, waterfallConnector:{enabled:true, connections:connections3} },
+          scales:{ x:{ticks:{color:tickColor,font:baseFont},grid:{color:gridColor}}, y:{ticks:{color:tickColor,font:baseFont,precision:0,callback:v=>v===0?"":v},grid:{color:gridColor}} } }, {y:"人數"}) });
+    }
+  } else if(!isOverview() && isMulti()){
+    const p = REAL_POPCHANGE[state.village];
+    el.innerHTML = `<div class="idx-tabs" id="pc6MultiTabs" style="flex-wrap:wrap">${PC_TABS4.map(([k,l])=>`<button data-k="${k}" class="${pc6MultiTab===k?'active':''}">${l}</button>`).join("")}</div><div class="chart-wrap" id="body6main"></div>`;
+    document.querySelectorAll("#pc6MultiTabs button").forEach(btn=> btn.addEventListener("click", ()=>{ pc6MultiTab=btn.dataset.k; render6(); }));
+    if(pc6MultiTab === "total"){
+      mountChart("body6main", { type:"line", data:{ labels:YEARS, datasets:[{ label:"總增加", data:p.total, borderColor:PC_LINE_BRIGHT, backgroundColor:"transparent", tension:.3, borderWidth:2.5 }] },
+        options: baseOptions({ plugins:{legend:{display:false},tooltip:baseOptions().plugins.tooltip, zeroLine:{enabled:true,color:ZERO_LINE_COLOR,width:2}}, scales:{ x:{ticks:{color:tickColor,font:baseFont},grid:{color:gridColor}}, y:{ticks:{color:tickColor,font:baseFont,precision:0,callback:v=>v===0?"":v},grid:{color:gridColor}} } }, {x:"年份", y:"人數"}) });
+    } else if(pc6MultiTab === "nature"){
+      mountChart("body6main", { type:"bar", data:{ labels:YEARS, datasets:[
+        { label:"出生", data:p.born, backgroundColor:PC_COLOR.inc, yAxisID:"y", order:2 },
+        { label:"死亡", data:p.dead, backgroundColor:PC_COLOR.dec, yAxisID:"y", order:2 },
+        { type:"line", label:"自然增加率(‰)", data:p.natureRate, borderColor:PC_LINE_BRIGHT, backgroundColor:"transparent", tension:.3, yAxisID:"y1", order:1, borderWidth:2.5, z:10 }
+      ]}, options: baseOptions({
+        scales:{ x:{ ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} },
+          y:{ position:"left", min:0, ticks:{color:tickColor,font:baseFont,precision:0}, grid:{color:gridColor} },
+          y1:{ type:"linear", position:"right", ticks:{color:tickColor,font:baseFont}, grid:{drawOnChartArea:false} } }
+      }, {x:"年份", y:"人數", y1:"‰"}) });
+    } else if(pc6MultiTab === "social"){
+      mountChart("body6main", { type:"bar", data:{ labels:YEARS, datasets:[
+        { label:"遷入", data:p.entry_p, backgroundColor:PC_COLOR.inc, yAxisID:"y", order:2 },
+        { label:"遷出", data:p.exit_p, backgroundColor:PC_COLOR.dec, yAxisID:"y", order:2 },
+        { type:"line", label:"社會增加率(‰)", data:p.socialRate, borderColor:PC_LINE_BRIGHT, backgroundColor:"transparent", tension:.3, yAxisID:"y1", order:1, borderWidth:2.5, z:10 }
+      ]}, options: baseOptions({
+        scales:{ x:{ ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} },
+          y:{ position:"left", min:0, ticks:{color:tickColor,font:baseFont,precision:0}, grid:{color:gridColor} },
+          y1:{ type:"linear", position:"right", ticks:{color:tickColor,font:baseFont}, grid:{drawOnChartArea:false} } }
+      }, {x:"年份", y:"人數", y1:"‰"}) });
+    } else {
+      mountChart("body6main", { type:"line", data:{ labels:YEARS, datasets:[
+        { label:"鄉內遷入", data:p.entry_addr, borderColor:PC_COLOR.inc, backgroundColor:"transparent", tension:.3 },
+        { label:"鄉內遷出", data:p.exit_addr, borderColor:PC_COLOR.dec, backgroundColor:"transparent", tension:.3 },
+        { label:"鄉內遷徙淨增", data:p.intra, borderColor:PC_COLOR.sub, backgroundColor:"transparent", tension:.3 }
+      ]}, options: baseOptions({ scales:{ x:{ticks:{color:tickColor,font:baseFont},grid:{color:gridColor}}, y:{ticks:{color:tickColor,font:baseFont,precision:0, callback:v=> v===0 ? "" : v},grid:{color:gridColor}} },
+        plugins:{ legend: baseOptions().plugins.legend, tooltip: baseOptions().plugins.tooltip, zeroLine:{ enabled:true, color:ZERO_LINE_COLOR, width:2 } } }, {x:"年份", y:"人數"}) });
+    }
+  } else if(isOverview() && !isMulti()){
+    const i = state.yearIndex;
+    if(pc6OvSingleTab === "total"){
+      el.innerHTML = `<div class="idx-tabs" id="pc6OvTabs" style="flex-wrap:wrap">${PC_TABS4.map(([k,l])=>`<button data-k="${k}" class="${pc6OvSingleTab===k?'active':''}">${l}</button>`).join("")}</div><div class="chart-wrap" id="body6main"></div>${rateTableHTML("totalRate","總增加率")}`;
+      document.querySelectorAll("#pc6OvTabs button").forEach(btn=> btn.addEventListener("click", ()=>{ pc6OvSingleTab=btn.dataset.k; render6(); }));
+      mountChart("body6main", { type:"bar", data:{ labels:VILLAGES, datasets:[{ data:VILLAGES.map(v=>REAL_POPCHANGE[v].total[i]), backgroundColor:VILLAGES.map(v=>tint(COLOR.villages[v],0.45)) }] },
+        options: baseOptions({ plugins:{legend:{display:false},tooltip:baseOptions().plugins.tooltip, zeroLine:{enabled:true,color:ZERO_LINE_COLOR,width:2}}, scales:{ x:{ticks:{color:tickColor,font:baseFont},grid:{color:gridColor}}, y:{ticks:{color:tickColor,font:baseFont,precision:0,callback:v=>v===0?"":v},grid:{color:gridColor}} } }, {x:"村里", y:"人數"}) });
+    } else if(pc6OvSingleTab === "nature"){
+      el.innerHTML = `<div class="idx-tabs" id="pc6OvTabs" style="flex-wrap:wrap">${PC_TABS4.map(([k,l])=>`<button data-k="${k}" class="${pc6OvSingleTab===k?'active':''}">${l}</button>`).join("")}</div><div id="body6main"></div>`;
+      document.querySelectorAll("#pc6OvTabs button").forEach(btn=> btn.addEventListener("click", ()=>{ pc6OvSingleTab=btn.dataset.k; render6(); }));
+      renderGroupedWaterfall(["出生","死亡","自然增加"],
+        v=>REAL_POPCHANGE[v].born[i], v=>REAL_POPCHANGE[v].dead[i], v=>REAL_POPCHANGE[v].nature[i], 0, {key:"natureRate", label:"自然增加率"});
+    } else if(pc6OvSingleTab === "social"){
+      el.innerHTML = `<div class="idx-tabs" id="pc6OvTabs" style="flex-wrap:wrap">${PC_TABS4.map(([k,l])=>`<button data-k="${k}" class="${pc6OvSingleTab===k?'active':''}">${l}</button>`).join("")}</div><div id="body6main"></div>`;
+      document.querySelectorAll("#pc6OvTabs button").forEach(btn=> btn.addEventListener("click", ()=>{ pc6OvSingleTab=btn.dataset.k; render6(); }));
+      renderGroupedWaterfall(["遷入","遷出","社會增加"],
+        v=>REAL_POPCHANGE[v].entry_p[i], v=>REAL_POPCHANGE[v].exit_p[i], v=>REAL_POPCHANGE[v].social[i], 8, {key:"socialRate", label:"社會增加率"});
+    } else {
+      el.innerHTML = `<div class="idx-tabs" id="pc6OvTabs" style="flex-wrap:wrap">${PC_TABS4.map(([k,l])=>`<button data-k="${k}" class="${pc6OvSingleTab===k?'active':''}">${l}</button>`).join("")}</div><div id="body6main"></div>`;
+      document.querySelectorAll("#pc6OvTabs button").forEach(btn=> btn.addEventListener("click", ()=>{ pc6OvSingleTab=btn.dataset.k; render6(); }));
+      renderGroupedWaterfall(["鄉內遷入","鄉內遷出","鄉內遷徙淨增"],
+        v=>REAL_POPCHANGE[v].entry_addr[i], v=>REAL_POPCHANGE[v].exit_addr[i], v=>REAL_POPCHANGE[v].intra[i], 0, {key:"intraRate", label:"鄉內流動率"});
+    }
+  } else {
+    let subHtml = "";
+    if(pc6OvMultiTab === "nature"){
+      const subs = [["born","出生率"],["dead","死亡率"],["nature","總自然增加率"]];
+      subHtml = `<div class="idx-tabs" id="pc6OvMultiSub" style="margin-top:6px">${subs.map(([k,l])=>`<button data-k="${k}" class="${pc6OvMultiSub===k?'active':''}">${l}</button>`).join("")}</div>`;
+    } else if(pc6OvMultiTab === "social"){
+      const subs = [["entry_p","遷入率"],["exit_p","遷出率"],["social","總社會增加率"]];
+      subHtml = `<div class="idx-tabs" id="pc6OvMultiSub" style="margin-top:6px">${subs.map(([k,l])=>`<button data-k="${k}" class="${pc6OvMultiSub===k?'active':''}">${l}</button>`).join("")}</div>`;
+    }
+    el.innerHTML = `<div class="idx-tabs" id="pc6OvMultiTabs" style="flex-wrap:wrap">${PC_TABS4.map(([k,l])=>`<button data-k="${k}" class="${pc6OvMultiTab===k?'active':''}">${l}</button>`).join("")}</div>${subHtml}<div class="chart-wrap" id="body6main"></div>`;
+    document.querySelectorAll("#pc6OvMultiTabs button").forEach(btn=> btn.addEventListener("click", ()=>{
+      pc6OvMultiTab=btn.dataset.k;
+      pc6OvMultiSub = pc6OvMultiTab==="nature" ? "nature" : pc6OvMultiTab==="social" ? "social" : "total";
+      render6();
+    }));
+    if(subHtml){
+      document.querySelectorAll("#pc6OvMultiSub button").forEach(btn=> btn.addEventListener("click", ()=>{ pc6OvMultiSub=btn.dataset.k; render6(); }));
+    }
+    let key;
+    if(pc6OvMultiTab === "total") key = "totalRate";
+    else if(pc6OvMultiTab === "intra") key = "intraRate";
+    else if(pc6OvMultiTab === "nature") key = pc6OvMultiSub==="born" ? "birthRate" : pc6OvMultiSub==="dead" ? "deathRate" : "natureRate";
+    else key = pc6OvMultiSub==="entry_p" ? "entryRate" : pc6OvMultiSub==="exit_p" ? "exitRate" : "socialRate";
+    let fixedRange = null;
+    if(pc6OvMultiTab === "nature") fixedRange = NATURE_RATE_RANGE;
+    else if(pc6OvMultiTab === "social") fixedRange = SOCIAL_RATE_RANGE;
+    const positiveOnly = !fixedRange && ["birthRate","deathRate","entryRate","exitRate"].includes(key);
+    mountChart("body6main", { type:"line", data:{ labels:YEARS, datasets: VILLAGES.map(v=>({
+      label:v, data: REAL_POPCHANGE[v][key], borderColor:tint(COLOR.villages[v],0.45), backgroundColor:"transparent", tension:.3
+    })) }, options: baseOptions({ plugins:{legend: baseOptions().plugins.legend, tooltip: baseOptions().plugins.tooltip, zeroLine:{enabled: fixedRange ? true : !positiveOnly, color:ZERO_LINE_COLOR,width:2}},
+      scales:{ x:{ticks:{color:tickColor,font:baseFont},grid:{color:gridColor}},
+        y:{ min: fixedRange ? fixedRange.min : (positiveOnly ? 0 : undefined),
+            max: fixedRange ? fixedRange.max : undefined,
+            ticks:{color:tickColor,font:baseFont, stepSize: fixedRange ? fixedRange.step : undefined, callback:v=> ((fixedRange || !positiveOnly) && v===0) ? "" : v},grid:{color:gridColor}} } }, {x:"年份", y:"千分比(‰)"}) });
+  }
+}
+
+
+const ELDERLY_BANDS = ["65-74","75-84","85+"];
+const HOUSING_YEARS = [2015,2016,2017,2018,2019];
+
+function render7(){
+  const el = document.getElementById("body7");
+  const year = YEARS[state.yearIndex];
+  const info7 = document.getElementById("info-src7");
+  info7.innerHTML = "資料來源：社會經濟資料開放平台－臺東縣村里行政區獨居老人分析統計<br>※原始資料僅有 2020 年一次調查，故僅在「單時期」且年份為 2020 年時顯示。<br>※其餘狀態暫無對應資料。"
+    + ((isOverview() && !isMulti()) ? "<br>※總覽單時期的比例，分母為該村 2020 年 65 歲以上人口數。" : "");
+  if(!isOverview() && !isMulti() && year===2020){
+    const d = REAL_ELDERLY_ALONE[state.village];
+    el.innerHTML = `<div class="chart-wrap" id="body7main"></div>`;
+    const maxAbs = Math.max(d.young[0],d.middle[0],d.old[0],d.young[1],d.middle[1],d.old[1]);
+    const axisMax = Math.ceil(maxAbs/2)*2 || 2;
+    mountChart("body7main", { type:"bar", data:{ labels:["65-74","75-84","85以上"], datasets:[
+      { label:"男", data:[-d.young[0], -d.middle[0], -d.old[0]], backgroundColor:COLOR.male },
+      { label:"女", data:[d.young[1], d.middle[1], d.old[1]], backgroundColor:COLOR.female }
+    ]}, options: baseOptions({
+      indexAxis:"y",
+      scales:{ x:{ stacked:false, min:-axisMax, max:axisMax, ticks:{color:tickColor, font:baseFont, callback:v=>Math.abs(v)}, grid:{color:gridColor} },
+               y:{ stacked:true, ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} } },
+      plugins:{ legend: baseOptions().plugins.legend, tooltip:{ callbacks:{ label:(ctx)=>`${ctx.dataset.label}: ${Math.abs(ctx.raw)}` }, backgroundColor:"#ffffff", titleColor:"#10233b", bodyColor:"#54708c" } }
+    }, {x:"人數", y:"年齡層"})});
+  } else if(!isOverview() && !isMulti()){
+    el.innerHTML = `<div class="placeholder-x"><div class="x-mark">✕</div>獨居老人統計僅有 2020 年資料<br>請把時間軸切到 2020 年查看</div>`;
+  } else if(isOverview() && !isMulti() && year===2020){
+    el.innerHTML = `<div class="chart-wrap" id="body7main"></div>${genderAgeLegendHTML7()}<div class="legend-row" style="margin-top:6px">比例分母為該村 65 歲以上人口（2020 年）</div>`;
+    const idx2020 = YEARS.indexOf(2020);
+    const pop65 = {};
+    VILLAGES.forEach(v=>{
+      pop65[v] = VILLAGE_CFG[v].age3GenderSeries.old_m[idx2020] + VILLAGE_CFG[v].age3GenderSeries.old_f[idx2020];
+    });
+    const pct = (v,key,g)=> pop65[v]>0 ? Math.round(REAL_ELDERLY_ALONE[v][key][g]/pop65[v]*1000)/10 : 0;
+    mountChart("body7main", { type:"bar", data:{ labels:VILLAGES, datasets:[
+      { label:"65-74 男", data:VILLAGES.map(v=>-pct(v,"young",0)), backgroundColor:MALE_SHADES.young, stack:"s" },
+      { label:"75-84 男", data:VILLAGES.map(v=>-pct(v,"middle",0)), backgroundColor:MALE_SHADES.adult, stack:"s" },
+      { label:"85以上 男", data:VILLAGES.map(v=>-pct(v,"old",0)), backgroundColor:MALE_SHADES.old, stack:"s" },
+      { label:"65-74 女", data:VILLAGES.map(v=>pct(v,"young",1)), backgroundColor:FEMALE_SHADES.young, stack:"s" },
+      { label:"75-84 女", data:VILLAGES.map(v=>pct(v,"middle",1)), backgroundColor:FEMALE_SHADES.adult, stack:"s" },
+      { label:"85以上 女", data:VILLAGES.map(v=>pct(v,"old",1)), backgroundColor:FEMALE_SHADES.old, stack:"s" }
+    ]}, options: baseOptions({
+      scales:{ x:{ stacked:true, ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} },
+               y:{ stacked:true, ticks:{color:tickColor,font:baseFont, callback:v=>Math.abs(v)+"%"}, grid:{color:gridColor} } },
+      plugins:{ legend:{ display:false },
+        tooltip:{ callbacks:{ label:(ctx)=> `${ctx.dataset.label}: ${Math.abs(ctx.raw)}%` }, backgroundColor:"#ffffff", titleColor:"#10233b", bodyColor:"#54708c" } }
+    }, {x:"村里", y:"佔65歲以上人口比例(%)"})});
+    bindGenderAgeLegend7("body7","body7main");
+  } else if(isOverview() && !isMulti()){
+    el.innerHTML = `<div class="placeholder-x"><div class="x-mark">✕</div>獨居老人統計僅有 2020 年資料<br>請把時間軸切到 2020 年查看</div>`;
+  } else {
+    el.innerHTML = `<div class="placeholder-x"><div class="x-mark">✕</div>獨居老人統計僅有 2020 年單一時期資料<br>請切換至「單時期」並選 2020 年查看</div>`;
+  }
+}
+function genderAgeLegendHTML7(){
+  return `<div class="ga-legend">
+    <div class="ga-legend-row">
+      <span class="ga-legend-item" data-idx="0"><span class="dot" style="background:${MALE_SHADES.young}"></span>65-74 男</span>
+      <span class="ga-legend-item" data-idx="1"><span class="dot" style="background:${MALE_SHADES.adult}"></span>75-84 男</span>
+      <span class="ga-legend-item" data-idx="2"><span class="dot" style="background:${MALE_SHADES.old}"></span>85以上 男</span>
+    </div>
+    <div class="ga-legend-row">
+      <span class="ga-legend-item" data-idx="3"><span class="dot" style="background:${FEMALE_SHADES.young}"></span>65-74 女</span>
+      <span class="ga-legend-item" data-idx="4"><span class="dot" style="background:${FEMALE_SHADES.adult}"></span>75-84 女</span>
+      <span class="ga-legend-item" data-idx="5"><span class="dot" style="background:${FEMALE_SHADES.old}"></span>85以上 女</span>
+    </div>
+  </div>`;
+}
+function bindGenderAgeLegend7(containerId, chartId){
+  const chart = chartRegistry[chartId];
+  if(!chart) return;
+  document.querySelectorAll(`#${containerId} .ga-legend-item`).forEach(item=>{
+    const idx = parseInt(item.dataset.idx, 10);
+    item.style.cursor = "pointer";
+    const visible = chart.isDatasetVisible(idx);
+    item.style.opacity = visible ? "1" : "0.35";
+    item.addEventListener("click", ()=>{
+      const nowVisible = chart.isDatasetVisible(idx);
+      chart.setDatasetVisibility(idx, !nowVisible);
+      chart.update();
+      item.style.opacity = !nowVisible ? "1" : "0.35";
+    });
+  });
+}
+
+const HOUSING_LABELS = ["0-10年","11-20年","21-30年","31-40年","41-50年","51-60年","61年以上"];
+const HOUSING_COLORS = ["#2f5fa8","#1f9186","#b9822f","#b85f5d","#7c5cbf","#4c9a2a","#d6336c"];
+let housingTab = 0;
+function housingTabsHTML(){
+  return `<div class="idx-tabs" id="housingTabs" style="flex-wrap:wrap">${HOUSING_LABELS.map((l,idx)=>
+    `<button data-idx="${idx}" class="${housingTab===idx?'active':''}">${l}</button>`).join("")}</div>`;
+}
+function bindHousingTabs(){
+  document.querySelectorAll("#housingTabs button").forEach(btn=>{
+    btn.addEventListener("click", ()=>{ housingTab = parseInt(btn.dataset.idx,10); render8(); });
+  });
+}
+function render8(){
+  const el = document.getElementById("body8");
+  const year = YEARS[state.yearIndex];
+  const inRange = HOUSING_YEARS.includes(year);
+  if(!isOverview() && !isMulti()){
+    if(!inRange){
+      el.innerHTML = `<div class="placeholder-x"><div class="x-mark">✕</div>房屋屋齡統計僅到 2019 年<br>請把時間軸切到 2015-2019 年查看</div>`;
+      return;
+    }
+    const yi = HOUSING_YEARS.indexOf(year);
+    const data = REAL_HOUSING[state.village][yi];
+    if(data.reduce((a,b)=>a+b,0)===0){
+      el.innerHTML = `<div class="placeholder-x"><div class="x-mark">✕</div>${state.village} ${year} 年無屋齡資料</div>`;
+      return;
+    }
+    el.innerHTML = `<div class="chart-wrap" id="body8main"></div>`;
+    mountChart("body8main", { type:"pie", data:{ labels:HOUSING_LABELS, datasets:[{ data, backgroundColor:HOUSING_COLORS }] },
+      options: baseOptions({ plugins:{ legend:{position:"bottom", labels:{color:"#54708c", font:{family:"Noto Sans TC", size:9.5}, boxWidth:8}},
+        tooltip:{ backgroundColor:"#ffffff", titleColor:"#10233b", bodyColor:"#54708c", borderColor:"rgba(16,35,59,0.12)", borderWidth:1,
+          callbacks:{ title:(items)=> "屋齡"+items[0].label, label:(ctx)=> ctx.raw+" 戶" } } }, scales:{} }) });
+  } else if(!isOverview() && isMulti()){
+    const series = REAL_HOUSING[state.village];
+    el.innerHTML = `<div class="chart-wrap" id="body8main"></div><div class="legend-row" style="margin-top:6px">房屋屋齡統計僅到 2019 年，2020 年後暫無資料</div>`;
+    mountChart("body8main", { type:"line", data:{ labels:HOUSING_YEARS, datasets: HOUSING_LABELS.map((lab,idx)=>({
+      label:lab, data:series.map(y=>y[idx]), borderColor:HOUSING_COLORS[idx], backgroundColor:"transparent", tension:.3
+    })) }, options: baseOptions({ plugins:{ legend:{position:"bottom", labels:{color:"#54708c", font:{family:"Noto Sans TC", size:9}, boxWidth:7}}, tooltip: baseOptions().plugins.tooltip },
+      scales:{ x:{ ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} }, y:{ ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} } } }, {x:"年份", y:"戶數"}) });
+  } else if(isOverview() && !isMulti()){
+    if(!inRange){
+      el.innerHTML = `<div class="placeholder-x"><div class="x-mark">✕</div>房屋屋齡統計僅到 2019 年<br>請把時間軸切到 2015-2019 年查看</div>`;
+      return;
+    }
+    const yi = HOUSING_YEARS.indexOf(year);
+    el.innerHTML = `${housingTabsHTML()}<div class="chart-wrap" id="body8main"></div>`;
+    bindHousingTabs();
+    const yMax8 = (housingTab===6 && (year===2015 || year===2016)) ? 350 : 90;
+    mountChart("body8main", { type:"bar", data:{ labels:VILLAGES, datasets:[{
+      data:VILLAGES.map(v=>REAL_HOUSING[v][yi][housingTab]), backgroundColor:VILLAGES.map(v=>COLOR.villages[v])
+    }] }, options: baseOptions({ plugins:{legend:{display:false}, tooltip: baseOptions().plugins.tooltip},
+      scales:{ x:{ ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} }, y:{ min:0, max:yMax8, ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} } } }, {x:"村里", y:"戶數"}) });
+  } else {
+    el.innerHTML = `${housingTabsHTML()}<div class="chart-wrap" id="body8main"></div><div class="legend-row" style="margin-top:6px">房屋屋齡統計僅到 2019 年，2020 年後暫無資料</div>`;
+    bindHousingTabs();
+    const yMax8b = housingTab===6 ? 350 : 90;
+    mountChart("body8main", { type:"line", data:{ labels:HOUSING_YEARS, datasets: VILLAGES.map(v=>({
+      label:v, data:REAL_HOUSING[v].map(y=>y[housingTab]), borderColor:COLOR.villages[v], backgroundColor:"transparent", tension:.3
+    })) }, options: baseOptions({ scales:{ x:{ ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} }, y:{ min:0, max:yMax8b, ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} } } }, {x:"年份", y:"戶數"}) });
+  }
+}
+
+
+
+function medFacilityTable(v){
+  const list = MEDICAL_FACILITIES[v];
+  if(!list || list.length===0) return "";
+  return `<table class="med-table" style="margin-top:10px">
+    <thead><tr><th>機構名稱</th><th>機構類型</th><th>診療科別</th></tr></thead>
+    <tbody>${list.map(f=>`<tr><td>${f.name}</td><td>${f.type}</td><td>${f.depts}</td></tr>`).join("")}</tbody>
+  </table>`;
+}
+function medBigNumber(v){
+  const count = MEDICAL_FACILITIES[v].length;
+  return `<div style="text-align:center">
+    <div class="stat-value" style="font-size:44px">${count}</div>
+    <div class="stat-label">間醫療機構</div>
+  </div>${medFacilityTable(v)}`;
+}
+function renderMed(){
+  const el = document.getElementById("bodyMed");
+  if(!isOverview()){
+    el.innerHTML = medBigNumber(state.village);
+  } else {
+    el.innerHTML = `<div class="stat-grid" style="grid-template-columns:repeat(3,1fr)">${VILLAGES.map(v=>{
+      const count = MEDICAL_FACILITIES[v].length;
+      return `<div class="stat-block" style="text-align:center">
+        <div class="stat-label" style="font-weight:600; color:var(--text); margin-bottom:4px">${v}</div>
+        <div class="stat-value" style="font-size:44px">${count}</div>
+        <div class="stat-label">間醫療機構</div>
+        ${count>0 ? `<button class="compare-toggle" type="button" data-village="${v}" id="medShowBtn-${v}" style="margin-top:8px">顯示</button>` : ""}
+      </div>`;
+    }).join("")}</div>
+    <div id="medTableFull" style="margin-top:4px"></div>`;
+    const slot = document.getElementById("medTableFull");
+    VILLAGES.forEach(v=>{
+      const btn = document.getElementById("medShowBtn-"+v);
+      if(!btn) return;
+      btn.addEventListener("click", ()=>{
+        const isShown = slot.dataset.shown === v;
+        if(isShown){
+          slot.innerHTML = ""; slot.dataset.shown = ""; btn.textContent = "顯示";
+        } else {
+          slot.innerHTML = `<div class="stat-label" style="margin-bottom:6px">${v}醫療機構列表</div>` + medFacilityTable(v);
+          slot.dataset.shown = v; btn.textContent = "隱藏";
+        }
+      });
+    });
+  }
+}
+const LU_C1_NAMES = {
+  "01":"農業利用土地","02":"森林利用土地","03":"交通利用土地","04":"水利利用土地",
+  "05":"建築利用土地","06":"公共利用土地","07":"遊憩利用土地","08":"礦鹽利用土地","09":"其他利用土地"
+};
+const LU_CAT_COLORS = {
+  "01":"#98E600", "02":"#5AC200", "03":"#FF5500", "04":"#97DBF2", "05":"#FFA1A1",
+  "06":"#FFC559", "07":"#FFFB14", "08":"#CE8CFF", "09":"#E1E1E1"
+};
+let luSelectedCats = ["01"];
+function luAreaChecklistHTML(){
+  const codes = Object.keys(LU_C1_NAMES);
+  return `<div class="lu-cat-panel">
+    <div class="lu-cat-actions">
+      <button class="compare-clear" id="luAreaSelectAll" type="button">全選</button>
+      <button class="compare-clear" id="luAreaClear" type="button">清除</button>
+    </div>
+    ${codes.map(code=>`<label class="compare-row small"><input type="checkbox" data-code="${code}" ${luSelectedCats.includes(code)?"checked":""}> ${code}${LU_C1_NAMES[code]}</label>`).join("")}
+  </div>`;
+}
+function renderLuAreaSection(){
+  const container = document.getElementById("luAreaSection");
+  if(!container) return;
+  container.innerHTML = `
+    <div class="stat-label" style="font-weight:600; margin-top:0; margin-bottom:8px">各類別面積比較（107年 vs 112年）</div>
+    <div id="luAreaBody"></div>
+    <div style="margin-top:14px">${luAreaChecklistHTML()}</div>
+  `;
+  document.getElementById("luAreaSelectAll").addEventListener("click", ()=>{
+    luSelectedCats = Object.keys(LU_C1_NAMES);
+    renderLuAreaSection();
+  });
+  document.getElementById("luAreaClear").addEventListener("click", ()=>{
+    luSelectedCats = [];
+    renderLuAreaSection();
+  });
+  document.querySelectorAll('.lu-cat-panel input[type="checkbox"]').forEach(cb=>{
+    cb.addEventListener("change", ()=>{
+      const code = cb.dataset.code;
+      if(cb.checked){ if(!luSelectedCats.includes(code)) luSelectedCats.push(code); }
+      else { luSelectedCats = luSelectedCats.filter(c=>c!==code); }
+      renderLuAreaSection();
+    });
+  });
+
+  const bodyEl = document.getElementById("luAreaBody");
+  if(luSelectedCats.length === 0){
+    bodyEl.innerHTML = `<div class="legend-row" style="margin-top:8px">請至少選擇一個分類</div>`;
+    return;
+  }
+  const codes = Object.keys(LU_C1_NAMES);
+  const totalByYear = { "107":0, "112":0 };
+  luSelectedCats.forEach(code=>{ totalByYear["107"] += LU_AREA_DATA["107"][code]||0; totalByYear["112"] += LU_AREA_DATA["112"][code]||0; });
+  const totalDiff = totalByYear["112"] - totalByYear["107"];
+  const arrowOf = d => d>0.005 ? "▲" : d<-0.005 ? "▼" : "－";
+  const colorOf = d => d>0.005 ? "#2b8a3e" : d<-0.005 ? "#c92a2a" : "#8a97a3";
+  const grandTotal107 = Object.values(LU_AREA_DATA["107"]).reduce((a,b)=>a+b,0);
+  const grandTotal112 = Object.values(LU_AREA_DATA["112"]).reduce((a,b)=>a+b,0);
+
+  bodyEl.innerHTML = `
+    <div class="chart-wrap" id="luAreaChart" style="height:220px"></div>
+    <div class="legend-row" style="margin-top:10px; margin-bottom:2px">單位：公頃，括號內為該項佔該年面積之百分比</div>
+    <table class="med-table">
+      <thead><tr><th>分類</th><th>107年</th><th>112年</th><th>變化</th></tr></thead>
+      <tbody>
+        ${luSelectedCats.map(code=>{
+          const v107 = LU_AREA_DATA["107"][code]||0, v112 = LU_AREA_DATA["112"][code]||0, diff = v112-v107;
+          return `<tr><td>${code}${LU_C1_NAMES[code]}</td><td>${v107.toFixed(2)}（${(v107/grandTotal107*100).toFixed(1)}%）</td><td>${v112.toFixed(2)}（${(v112/grandTotal112*100).toFixed(1)}%）</td><td style="color:${colorOf(diff)}">${arrowOf(diff)} ${Math.abs(diff).toFixed(2)}</td></tr>`;
+        }).join("")}
+        <tr style="font-weight:700"><td>加總</td><td>${totalByYear["107"].toFixed(2)}（${(totalByYear["107"]/grandTotal107*100).toFixed(1)}%）</td><td>${totalByYear["112"].toFixed(2)}（${(totalByYear["112"]/grandTotal112*100).toFixed(1)}%）</td><td style="color:${colorOf(totalDiff)}">${arrowOf(totalDiff)} ${Math.abs(totalDiff).toFixed(2)}</td></tr>
+      </tbody>
+    </table>
+  `;
+  mountChart("luAreaChart", { type:"bar", data:{ labels:["107年","112年"], datasets: luSelectedCats.map(code=>({
+    label: code+LU_C1_NAMES[code], data:[LU_AREA_DATA["107"][code]||0, LU_AREA_DATA["112"][code]||0],
+    backgroundColor: LU_CAT_COLORS[code], stack:"s",
+    barPercentage: 0.6, categoryPercentage: 0.9, maxBarThickness: 46
+  })) }, options: baseOptions({
+    plugins:{ legend:{ display: luSelectedCats.length>1, labels:{color:"#54708c", font:{family:"Noto Sans TC", size:10}, boxWidth:8} } },
+    scales:{ x:{ stacked:true, offset:true, ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} },
+             y:{ stacked:true, ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} } }
+  }, {x:"年份", y:"面積(公頃)"}) });
+}
+const LU_LAYER_URL_107 = "https://igisportal.geomatics.ncku.edu.tw/server/rest/services/%E7%B6%A0%E5%B3%B6%E5%9C%8B%E5%9C%9F%E5%88%A9%E7%94%A8%E8%AA%BF%E6%9F%A5107/MapServer";
+const LU_LAYER_URL_112 = "https://igisportal.geomatics.ncku.edu.tw/server/rest/services/%E7%B6%A0%E5%B3%B6%E5%9C%8B%E5%9C%9F%E5%88%A9%E7%94%A8%E8%AA%BF%E6%9F%A5112/MapServer";
+const VILLAGE_BOUNDARY_URL = "https://igisportal.geomatics.ncku.edu.tw/server/rest/services/Hosted/112_test/FeatureServer/18";
+let luView = null, luSwipe = null, luLayer107 = null, luLayer112 = null;
+function render9(){
+  const el = document.getElementById("body9");
+  if(isMulti()){
+    if(luView){ return; } // 地圖已經初始化過，維持現狀即可，不重新建立
+    el.innerHTML = `<div style="display:flex; gap:16px; align-items:flex-start;">
+      <div style="flex:1 1 0; min-width:0;">
+        <div style="position:relative">
+          <div id="luMapView" style="height:340px; border-radius:8px; overflow:hidden;"></div>
+          <div style="position:absolute; top:10px; left:10px; z-index:5; pointer-events:none; background:rgba(255,255,255,0.92); padding:4px 12px; border-radius:6px; font-size:12.5px; font-weight:600; color:#10233b; box-shadow:0 1px 4px rgba(0,0,0,0.15)">107 年</div>
+          <div style="position:absolute; top:10px; right:10px; z-index:5; pointer-events:none; background:rgba(255,255,255,0.92); padding:4px 12px; border-radius:6px; font-size:12.5px; font-weight:600; color:#10233b; box-shadow:0 1px 4px rgba(0,0,0,0.15)">112 年</div>
+        </div>
+        <div class="legend-row" style="margin-top:8px">左右拖曳中間的滑桿，比較 107 年（左）與 112 年（右）綠島國土利用調查結果；點選地圖上任一區塊可查看詳細分類</div>
+      </div>
+      <div style="flex:1 1 0; min-width:0;">
+        <div id="luAreaSection"></div>
+      </div>
+    </div>`;
+    renderLuAreaSection();
+    require(["esri/Map","esri/views/MapView","esri/layers/MapImageLayer","esri/layers/FeatureLayer","esri/layers/GraphicsLayer","esri/Graphic","esri/widgets/Swipe","esri/widgets/Legend","esri/widgets/Expand","esri/widgets/Home","esri/rest/identify","esri/rest/support/IdentifyParameters"],
+      (Map, MapView, MapImageLayer, FeatureLayer, GraphicsLayer, Graphic, Swipe, Legend, Expand, Home, identify, IdentifyParameters) => {
+        luLayer107 = new MapImageLayer({ url: LU_LAYER_URL_107, title: "綠島國土利用調查 107年" });
+        luLayer112 = new MapImageLayer({ url: LU_LAYER_URL_112, title: "綠島國土利用調查 112年" });
+        const luVillageBoundary = new FeatureLayer({
+          url: VILLAGE_BOUNDARY_URL,
+          title: "村里界",
+          renderer: {
+            type: "simple",
+            symbol: { type:"simple-fill", color:[0,0,0,0], outline:{ color:"#10233b", width:1.5 } }
+          },
+          labelsVisible: false // 不用內建標籤（會蓋住地圖），改成自己畫在海上的文字
+        });
+        const luLabelLayer = new GraphicsLayer({ title: "村名標籤" });
+        const map = new Map({ basemap: "gray-vector", layers: [luLayer107, luLayer112, luVillageBoundary, luLabelLayer] });
+        luView = new MapView({
+          container: "luMapView", map,
+          center: [121.49, 22.665], zoom: 13,  // 保底初始位置，避免自動對齊失敗時整個世界地圖跑出來
+          ui: { components: ["zoom"] },
+          popup: { dockEnabled: false }
+        });
+        luSwipe = new Swipe({
+          view: luView,
+          leadingLayers: [luLayer107],
+          trailingLayers: [luLayer112],
+          direction: "horizontal",
+          position: 50
+        });
+        luView.ui.add(luSwipe);
+        luView.ui.move("zoom", "bottom-right");
+
+        const legend = new Legend({ view: luView, layerInfos:[{layer:luLayer112, title:"國土利用類別"}] });
+        const legendExpand = new Expand({ view: luView, content: legend, expanded: false, expandTooltip: "顯示圖例" });
+        luView.ui.add(legendExpand, "bottom-left");
+
+        // 自動對齊範圍
+        luView.when(()=>{
+          Promise.all([luLayer107.load(), luLayer112.load()]).then(()=>{
+            try {
+              const ext107 = luLayer107.fullExtent, ext112 = luLayer112.fullExtent;
+              const target = (ext107 && ext112) ? ext107.union(ext112) : (ext107 || ext112);
+              if(target){
+                // 右邊多留一點空間、左邊少留一點，讓整體視圖往右挪一點點，避免左側（中寮/南寮那側）被邊界切到
+                // 想再往右挪多一點，就把 LU_RIGHT_PAD 數字調大；想往左挪就調小甚至調成比 LU_LEFT_PAD 小
+                const LU_LEFT_PAD = 0.1, LU_RIGHT_PAD = 0.03, LU_TOP_PAD = 0.03, LU_BOTTOM_PAD = 0.03;
+                const LU_EXTRA_ZOOM = 1.3; // 初始視圖再放大一點點：數字越大放得越大（原本是固定+1，現在改成可調整的常數）
+                const w = target.xmax - target.xmin, h = target.ymax - target.ymin;
+                const padded = target.clone();
+                padded.xmin = target.xmin - w * LU_LEFT_PAD;
+                padded.xmax = target.xmax + w * LU_RIGHT_PAD;
+                padded.ymin = target.ymin - h * LU_BOTTOM_PAD;
+                padded.ymax = target.ymax + h * LU_TOP_PAD;
+                luView.goTo({ target: padded }, { animate: true }).then(()=>{
+                  luView.zoom = luView.zoom + LU_EXTRA_ZOOM; // 初始視圖再放大一點點：改這個數字調整放大幅度
+                  const home = new Home({ view: luView, viewpoint: luView.viewpoint.clone() });
+                  luView.ui.add([home, "zoom"], "bottom-right"); // 陣列方式加入，確保Home在上、縮放在下、同一直排
+                }).catch(err=>{
+                  console.error("土地利用地圖 goTo 失敗：", err);
+                });
+              } else {
+                console.warn("土地利用圖層沒有 fullExtent，維持預設中心點");
+              }
+            } catch(err){
+              console.error("土地利用地圖自動對齊範圍失敗：", err);
+            }
+          }).catch(err=> console.error("土地利用圖層載入失敗：", err));
+        }).catch(err=> console.error("luView 初始化失敗：", err));
+
+        // 村界載入後：往指定方向推到海上放村名文字（不用內建標籤，避免蓋住地圖本身）
+        luVillageBoundary.load().then(()=>{
+          return luVillageBoundary.queryFeatures({ where:"1=1", outFields:["village"], returnGeometry:true });
+        }).then((result)=>{
+          const feats = result.features;
+          if(!feats || feats.length === 0){ console.warn("村界圖層沒有查到任何資料"); return; }
+          // 針對三個已知村莊，各自指定推出方向與距離（單位：公尺，座標系統為 TWD97 投影）
+          // dx為正=往東推，dy為正=往北推；可依實際效果調整這幾個數字
+          const LABEL_OFFSET = {
+            "中寮村": { dx: -600, dy: 1300 },  // 往西北方的海上
+            "南寮村": { dx: -850, dy: -1900 }, // 往西南方的海上
+            "公館村": { dx: 2100, dy: 100 }    // 往東邊的海上
+          };
+          feats.forEach(f=>{
+            const c = f.geometry.extent.center;
+            const vname = f.attributes.village;
+            const offset = LABEL_OFFSET[vname] || { dx:0, dy:0 };
+            const labelPoint = {
+              type:"point", x: c.x + offset.dx, y: c.y + offset.dy,
+              spatialReference: f.geometry.spatialReference
+            };
+            luLabelLayer.add(new Graphic({
+              geometry: labelPoint,
+              symbol: {
+                type:"text", text: vname,
+                color:"#10233b", haloColor:"#ffffff", haloSize:1.5,
+                font:{ size:12, weight:"bold", family:"Noto Sans TC" }
+              }
+            }));
+          });
+        }).catch(err=> console.error("村界圖層載入或標籤計算失敗：", err));
+
+        // 點擊查詢：依滑桿位置判斷點在哪一邊，主動呼叫 Identify 查詢該年度圖層，自己組裝彈窗內容
+        luView.on("click", (event)=>{
+          const dividerX = luView.width * (luSwipe.position / 100);
+          const isLeftSide = event.x < dividerX;
+          const targetUrl = isLeftSide ? LU_LAYER_URL_107 : LU_LAYER_URL_112;
+          const yearLabel = isLeftSide ? "107年" : "112年";
+
+          const params = new IdentifyParameters();
+          params.tolerance = 3;
+          params.layerOption = "visible";
+          params.width = luView.width;
+          params.height = luView.height;
+          params.geometry = event.mapPoint;
+          params.mapExtent = luView.extent;
+          params.returnGeometry = false;
+
+          identify.identify(targetUrl, params).then((response)=>{
+            if(!response.results || response.results.length === 0){
+              luView.popup.open({ location: event.mapPoint, title: yearLabel, content: "此處無資料" });
+              return;
+            }
+            const attrs = response.results[0].feature.attributes;
+            const rows = [];
+            if(attrs.LCODEC_C1) rows.push(["LCODEC_C1", (attrs.LCODE_C1||"") + attrs.LCODEC_C1]);
+            if(attrs.LCODEC_C2) rows.push(["LCODEC_C2", (attrs.LCODE_C2||"") + attrs.LCODEC_C2]);
+            if(attrs.LCODEC_C3 && String(attrs.LCODEC_C3).trim()) rows.push(["LCODEC_C3", (attrs.LCODE_C3||"") + attrs.LCODEC_C3]);
+            const content = rows.map(([label,val],i)=>
+              `<div style="${i===0 ? "font-weight:700;" : ""}">${label}：${val}</div>`
+            ).join("");
+            luView.popup.open({ location: event.mapPoint, title: `${yearLabel} 土地利用`, content: content || "此處無分類資料" });
+          }).catch(err=>{
+            console.error("土地利用 Identify 查詢失敗：", err);
+          });
+        });
+      });
+  } else {
+    if(luView){ luView.destroy(); luView=null; luLayer107=null; luLayer112=null; luSwipe=null; }
+    el.innerHTML = `<div class="placeholder-x"><div class="x-mark">✕</div>此圖層為兩期比較，只有在「多時期」才會顯示滑動視窗<br>請切換上方「多時期」查看</div>`;
+  }
+}
+
+// ============ 合併地圖（取代 card0）：①②③⑥ 人口相關指標地圖，用切換器選圖層 ============
+const POP_PIE_URL = "https://igisportal.geomatics.ncku.edu.tw/server/rest/services/1_2015%E8%87%B32024%E7%B6%A0%E5%B3%B6%E4%BA%BA%E5%8F%A3%E7%B5%B1%E8%A8%88%E5%9C%93%E9%A4%85%E5%9C%96/MapServer/1";
+const POP_INDEX_URL = "https://igisportal.geomatics.ncku.edu.tw/server/rest/services/1%E5%92%8C3_2015%E8%87%B32024%E7%B6%A0%E5%B3%B6%E4%BA%BA%E5%8F%A3%E6%8C%87%E6%A8%99%E9%9D%A2%E9%87%8F%E5%9C%96/MapServer/16";
+const POP_CHANGE_URL = "https://igisportal.geomatics.ncku.edu.tw/server/rest/services/6_2015%E8%87%B32024%E7%B6%A0%E5%B3%B6%E4%BA%BA%E5%8F%A3%E5%A2%9E%E6%B8%9B%E9%9D%A2%E9%87%8F%E5%9C%96_time/MapServer/9";
+
+const MAP_VILLAGE_FIELD = "VILLAGE";
+const MAP_BOUNDARY_COLOR = "#9D9D9D"; // 三村邊界預設用這個灰色
+function mapBoundaryColor(field){ return MAP_BOUNDARY_COLOR; }
+function mapBoundaryWidth(field){ return 1; } // 邊界線寬統一都用1px，不然太細看起來像沒上色
+function yearDateClause(year){
+  return `DATE_Y >= DATE '${year}-01-01' AND DATE_Y <= DATE '${year}-12-31'`;
+}
+function yearFromDate(dateVal){
+  if(dateVal === null || dateVal === undefined) return "";
+  return new Date(dateVal).getFullYear();
+}
+
+// 圖層清單：每個選項描述怎麼建立/上色/篩選
+const MAP_LAYER_OPTIONS = [
+  { key:"pop_combo", label:"男女人口＆人口密度", group:"index", kind:"combo", color:[90,90,90] },
+  { key:"SEX", label:"性比例", group:"index", kind:"diverging", mid:100, low:[184,95,93], high:[47,95,168] },
+  { key:"DEP", label:"扶養比", group:"index", kind:"sequential", color:[232,103,43] },
+  { key:"YNG", label:"扶幼比", group:"index", kind:"sequential", color:[232,103,43] },
+  { key:"OLD", label:"扶老比", group:"index", kind:"sequential", color:[232,103,43] },
+  { key:"AGE", label:"老化指數", group:"index", kind:"sequential", color:[232,103,43] },
+  { key:"自增率", label:"自然增加率", group:"change", kind:"diverging", mid:0, low:[201,42,42], high:[43,138,62] },
+  { key:"社增率", label:"社會增加率", group:"change", kind:"diverging", mid:0, low:[201,42,42], high:[43,138,62] }
+];
+const MAP_GROUP_URL = { index: POP_INDEX_URL, change: POP_CHANGE_URL, pie: POP_PIE_URL }; // 順序＝疊圖順序，越後面越上層，圓餅要蓋在密度上面
+
+let mapCardView=null, mapCardMap=null, mapCardLayers={}, mapCardLabelLayers={}, mapCardAnimator=null, mapCardLegend=null, mapCardCurrentYear=null, mapCardCustomLegendEl=null, mapCardLegendOuterEl=null;
+let mapCardActive = "pop_combo";
+const _esriMod = {};
+
+function queryFieldMinMax(layer, field, whereClause){
+  return layer.queryFeatures({
+    where: whereClause || "1=1", outFields:[field], returnGeometry:false
+  }).then(result=>{
+    const vals = (result.features||[]).map(f=> f.attributes[field]).filter(v=> v !== null && v !== undefined && !isNaN(v));
+    if(vals.length === 0) throw new Error("查無有效數值："+field);
+    return { min: Math.min(...vals), max: Math.max(...vals) };
+  });
+}
+function computeEqualIntervalBreaks(layer, field, whereClause, numClasses){
+  numClasses = numClasses || 4;
+  return queryFieldMinMax(layer, field, whereClause).then(({min, max})=>{
+    const step = (max - min) / numClasses;
+    const breaks = [];
+    for(let i=0;i<numClasses;i++){
+      breaks.push({ min: min + step*i, max: (i===numClasses-1) ? max : min + step*(i+1) });
+    }
+    return breaks;
+  });
+}
+const MAP_INDICATOR_META = {
+  DEN: { label:"人口密度", unit:"人/km²", prec:2 },
+  SEX: { label:"性比例", unit:"", prec:2 },
+  DEP: { label:"扶養比", unit:"%", prec:1 },
+  YNG: { label:"扶幼比", unit:"%", prec:1 },
+  OLD: { label:"扶老比", unit:"%", prec:1 },
+  AGE: { label:"老化指數", unit:"", prec:1 },
+  "自增率": { label:"自然增加率", unit:"‰", prec:1 },
+  "社增率": { label:"社會增加率", unit:"‰", prec:1 }
+};
+function fmtIndicator(field, val){
+  const meta = MAP_INDICATOR_META[field] || { unit:"", prec:1 };
+  if(val === null || val === undefined || isNaN(val)) return "-";
+  return val.toFixed(meta.prec) + meta.unit;
+}
+function buildSequentialRenderer(field, breaks, baseColorRgb){
+  const [r,g,b] = baseColorRgb;
+  const meta = MAP_INDICATOR_META[field] || { unit:"", prec:1 };
+  const outlineColor = mapBoundaryColor(field);
+  const outlineWidth = mapBoundaryWidth(field);
+  const classBreakInfos = breaks.map((br, i)=>{
+    const t = (i+1) / breaks.length;
+    const alpha = 0.25 + t*0.65;
+    return { minValue: br.min, maxValue: br.max, symbol:{ type:"simple-fill", color:[r,g,b,alpha], outline:{color:outlineColor,width:outlineWidth} }, label:`${br.min.toFixed(meta.prec)}${meta.unit} - ${br.max.toFixed(meta.prec)}${meta.unit}` };
+  });
+  return { type:"class-breaks", field, classBreakInfos, defaultSymbol:{ type:"simple-fill", color:[200,200,200,0.3], outline:{color:outlineColor,width:outlineWidth} }, defaultLabel:"無資料" };
+}
+function buildDivergingRenderer(field, midpoint, minVal, maxVal, lowColorRgb, highColorRgb){
+  const meta = MAP_INDICATOR_META[field] || { unit:"", prec:1 };
+  const outlineColor = mapBoundaryColor(field);
+  const outlineWidth = mapBoundaryWidth(field);
+  const classBreakInfos = [];
+  const lowStep = (midpoint - minVal) / 2;
+  for(let i=0;i<2;i++){
+    const lo = minVal + lowStep*i, hi = (i===1) ? midpoint : minVal + lowStep*(i+1);
+    const alpha = 0.85 - i*0.4;
+    const [r,g,b] = lowColorRgb;
+    classBreakInfos.push({ minValue: lo, maxValue: hi, symbol:{ type:"simple-fill", color:[r,g,b,alpha], outline:{color:outlineColor,width:outlineWidth} }, label:`${lo.toFixed(meta.prec)}${meta.unit} - ${hi.toFixed(meta.prec)}${meta.unit}` });
+  }
+  const highStep = (maxVal - midpoint) / 2;
+  for(let i=0;i<2;i++){
+    const lo = midpoint + highStep*i, hi = (i===1) ? maxVal : midpoint + highStep*(i+1);
+    const alpha = 0.4 + i*0.45;
+    const [r,g,b] = highColorRgb;
+    classBreakInfos.push({ minValue: lo, maxValue: hi, symbol:{ type:"simple-fill", color:[r,g,b,alpha], outline:{color:outlineColor,width:outlineWidth} }, label:`${lo.toFixed(meta.prec)}${meta.unit} - ${hi.toFixed(meta.prec)}${meta.unit}` });
+  }
+  return { type:"class-breaks", field, classBreakInfos, defaultSymbol:{ type:"simple-fill", color:[200,200,200,0.3], outline:{color:outlineColor,width:outlineWidth} }, defaultLabel:"無資料" };
+}
+// 對照 buildSequentialRenderer／buildDivergingRenderer 同一套配色邏輯，但只算「單一數值」該落在哪一階、對應什麼顏色，
+// 用在單村模式：只有選中村要照資料上色，另外兩村只留邊框（跟單村單時期一致）
+function sequentialColorForValue(value, breaks, baseColorRgb){
+  const [r,g,b] = baseColorRgb;
+  for(let i=0;i<breaks.length;i++){
+    const br = breaks[i];
+    if(value >= br.min && value <= br.max){
+      const t = (i+1) / breaks.length;
+      return [r,g,b, 0.25 + t*0.65];
+    }
+  }
+  return [200,200,200,0.3];
+}
+function divergingColorForValue(value, midpoint, minVal, maxVal, lowColorRgb, highColorRgb){
+  if(value <= midpoint){
+    const lowStep = (midpoint - minVal) / 2;
+    for(let i=0;i<2;i++){
+      const lo = minVal + lowStep*i, hi = (i===1) ? midpoint : minVal + lowStep*(i+1);
+      if(value >= lo && value <= hi){
+        const [r,g,b] = lowColorRgb;
+        return [r,g,b, 0.85 - i*0.4];
+      }
+    }
+  } else {
+    const highStep = (maxVal - midpoint) / 2;
+    for(let i=0;i<2;i++){
+      const lo = midpoint + highStep*i, hi = (i===1) ? maxVal : midpoint + highStep*(i+1);
+      if(value >= lo && value <= hi){
+        const [r,g,b] = highColorRgb;
+        return [r,g,b, 0.4 + i*0.45];
+      }
+    }
+  }
+  return [200,200,200,0.3];
+}
+// 村名 label 位置自訂：三組各自可調整每一村的位移量（dx往右+、dy往上+，單位是地圖座標系統的公尺，不是像素）
+// 選單一村莊時（不論哪個頁籤、單/多時期）固定用 MAP_LABEL_OFFSET_SINGLE；
+// 總覽（三村）時再依頁籤細分：有圓餅圖那頁（男女人口＆人口密度）用 MAP_LABEL_OFFSET_OVERVIEW_COMBO，其餘頁籤用 MAP_LABEL_OFFSET_OVERVIEW_OTHER
+const MAP_LABEL_OFFSET_SINGLE = {
+  "南寮": { dx: 300, dy: -400 },
+  "中寮": { dx: 0, dy: 0 },
+  "公館": { dx: 400, dy: 0 }
+};
+const MAP_LABEL_OFFSET_OVERVIEW_COMBO = {
+  "南寮": { dx: -600, dy: 2100 },
+  "中寮": { dx: -850, dy: -1900 },
+  "公館": { dx: 2100, dy: 100 }
+};
+const MAP_LABEL_OFFSET_OVERVIEW_OTHER = {
+  "南寮": { dx: 300, dy: -400 },
+  "中寮": { dx: 0, dy: 0 },
+  "公館": { dx: 400, dy: 0 }
+};
+// isComboTab 只在「總覽」時才有意義，由呼叫端明確傳入目前解析出來的頁籤種類（不要用殘留的全域狀態去猜，之前就是這樣才出過包）；
+// 單一村莊時完全不管這個參數，一律固定用 MAP_LABEL_OFFSET_SINGLE
+function refreshVillageLabels(isComboTab){
+  if(!mapCardLabelLayers.main){
+    mapCardLabelLayers.main = new _esriMod.GraphicsLayer({ title: "村名標籤" });
+    mapCardMap.add(mapCardLabelLayers.main);
+  }
+  const labelLayer = mapCardLabelLayers.main;
+  labelLayer.visible = true;
+  labelLayer.removeAll(); // 總覽時顯示三村，選單村時只留該村，切換時要重畫
+  const where = yearDateClause(2024) + villageClause();
+  const offsetTable = !isOverview() ? MAP_LABEL_OFFSET_SINGLE : (isComboTab ? MAP_LABEL_OFFSET_OVERVIEW_COMBO : MAP_LABEL_OFFSET_OVERVIEW_OTHER);
+  mapCardLayers.index.load().then(()=> mapCardLayers.index.queryFeatures({ where, outFields:[MAP_VILLAGE_FIELD], returnGeometry:true }))
+    .then(result=>{
+      (result.features||[]).forEach(f=>{
+        const vname = f.attributes[MAP_VILLAGE_FIELD];
+        const offset = offsetTable[(vname||"").replace("村","")] || { dx:0, dy:0 };
+        const c = f.geometry.extent.center; // 村土地中央（可用上面三組offset微調位置）
+        labelLayer.add(new _esriMod.Graphic({
+          geometry: { type:"point", x:c.x+offset.dx, y:c.y+offset.dy, spatialReference:f.geometry.spatialReference },
+          symbol: { type:"text", text:vname, color:"#10233b", haloColor:"#ffffff", haloSize:1.5, font:{ size:12, weight:"bold", family:"Noto Sans TC" } }
+        }));
+      });
+    }).catch(err=> console.error("村名標籤載入失敗：", err));
+  return labelLayer;
+}
+function bringLayerToFront(layer){
+  if(!layer || !mapCardMap) return;
+  mapCardMap.layers.reorder(layer, mapCardMap.layers.length - 1);
+  // 村名標籤要一直維持在最上層，塗色圖層上移後要把標籤圖層再拉回最上面
+  if(mapCardLabelLayers.main){
+    mapCardMap.layers.reorder(mapCardLabelLayers.main, mapCardMap.layers.length - 1);
+  }
+}
+function createMapYearAnimator(containerId, onYearChange){
+  let idx = YEARS.length - 1;
+  let timer = null;
+  function render(){
+    const el = document.getElementById(containerId);
+    if(!el) return;
+    el.innerHTML = `<div style="display:flex; align-items:center; gap:6px; padding:6px 10px;">
+      <button type="button" id="${containerId}-play" style="width:26px;height:26px;border-radius:50%;border:1px solid var(--line-strong);background:var(--panel);cursor:pointer;flex-shrink:0; font-size:11px;">${timer?"⏸":"▶"}</button>
+      <div class="timeline-ticks" style="flex:1; min-width:0;">${YEARS.map((y,i)=>
+        `<button type="button" data-idx="${i}" class="timeline-tick map-mini-tick${i===idx?' active':''}"><span class="dot"></span><span>${y}</span></button>`
+      ).join("")}</div>
+    </div>`;
+    document.getElementById(containerId+"-play").addEventListener("click", ()=>{
+      if(timer){ clearInterval(timer); timer=null; }
+      else { timer = setInterval(()=>{ idx=(idx+1)%YEARS.length; onYearChange(YEARS[idx]); render(); }, 1200); }
+      render();
+    });
+    el.querySelectorAll(".map-mini-tick").forEach(btn=>{
+      btn.addEventListener("click", ()=>{
+        idx = parseInt(btn.dataset.idx,10);
+        if(timer){ clearInterval(timer); timer=null; }
+        onYearChange(YEARS[idx]);
+        render();
+      });
+    });
+  }
+  render();
+  onYearChange(YEARS[idx]);
+  return { stop(){ if(timer){ clearInterval(timer); timer=null; } } };
+}
+
+function mapCardOption(key){ return MAP_LAYER_OPTIONS.find(o=>o.key===key); }
+function buildLegendInfos(key){
+  const opt = mapCardOption(key);
+  if(opt.kind === "combo"){
+    const infos = [{ layer: mapCardLayers.index, title: "人口密度" }];
+    if(!isMulti()) infos.push({ layer: mapCardLayers.pie, title: "男女人口" });
+    return infos;
+  }
+  return [{ layer: mapCardLayers[opt.group], title: opt.label }];
+}
+// 單村模式下地圖用的是「只有選中村上色」的unique-value渲染器，ArcGIS自動圖例只會顯示村名不是色階，
+// 所以照著同一組classBreakInfos（跟總覽class-breaks渲染器用的是同一份資料）自己刻一份色階圖例
+function renderMapCardCustomLegend(title, classBreakInfos){
+  if(!mapCardCustomLegendEl) return;
+  const rows = classBreakInfos.map(info=>{
+    const c = info.symbol.color;
+    const rgba = `rgba(${c[0]},${c[1]},${c[2]},${c[3]})`;
+    return `<div style="display:flex; align-items:center; gap:6px; padding:2px 0;">
+      <span style="width:14px; height:14px; flex-shrink:0; background:${rgba}; border:1px solid ${MAP_BOUNDARY_COLOR};"></span>
+      <span style="font-size:12px; color:#334;">${info.label}</span>
+    </div>`;
+  }).join("");
+  mapCardCustomLegendEl.innerHTML = `<div style="font-weight:600; font-size:13px; padding:10px 10px 4px;">${title}</div><div style="padding:0 10px 10px;">${rows}</div>`;
+}
+function villageClause(){ return isOverview() ? "" : ` AND ${MAP_VILLAGE_FIELD}='${state.village}村'`; }
+
+let mapCardRecolorForYear = null; // 單村模式下，時間軸每跳一年就要重新查該村的值、重新上色，這裡讓 applyMapCardFilter 的動畫callback可以呼叫
+function applyMapCardRenderer(key){
+  const opt = mapCardOption(key);
+  const layer = mapCardLayers[opt && opt.group];
+  if(!opt || !layer) return;
+  if(opt.kind === "combo"){
+    applyMapCardPieRenderer();
+  }
+  const field = (opt.kind === "combo") ? "DEN" : opt.key;
+  const year = YEARS[state.yearIndex];
+  const whereBase = isMulti() ? "1=1" : yearDateClause(year);
+  const outlineColor = mapBoundaryColor(field), outlineWidth = mapBoundaryWidth(field);
+  const fallbackRenderer = { type:"simple", symbol:{ type:"simple-fill", color:[...(opt.color||opt.high||[90,90,90]),0.5], outline:{color:outlineColor,width:outlineWidth} } };
+  mapCardRecolorForYear = null;
+
+  // 單村模式：三村邊界都要顯示（跟單村單時期一致），但只有選中村依資料上色，另外兩村只留透明+邊框
+  function applySingleVillageIndicatorRenderer(colorForValue, legendClassBreakInfos){
+    if(mapCardLegend) mapCardLegend.visible = false;
+    if(document.getElementById("mapCardLegendWrap")) document.getElementById("mapCardLegendWrap").style.display = "none";
+    if(mapCardCustomLegendEl) mapCardCustomLegendEl.style.display = "";
+    renderMapCardCustomLegend(opt.label, legendClassBreakInfos);
+    const recolor = (y)=>{
+      layer.queryFeatures({ where: yearDateClause(y) + ` AND ${MAP_VILLAGE_FIELD}='${state.village}村'`, outFields:[field], returnGeometry:false })
+        .then(result=>{
+          const feat = result.features && result.features[0];
+          const val = feat ? feat.attributes[field] : null;
+          const color = (val===null || val===undefined) ? [200,200,200,0.3] : colorForValue(val);
+          layer.renderer = {
+            type:"unique-value", field: MAP_VILLAGE_FIELD,
+            uniqueValueInfos: [{ value: state.village+"村", symbol:{ type:"simple-fill", color, outline:{color:outlineColor,width:outlineWidth} } }],
+            defaultSymbol:{ type:"simple-fill", color:[0,0,0,0], outline:{color:outlineColor,width:outlineWidth} }, defaultLabel:""
+          };
+        }).catch(err=>{ console.error(opt.label+"單村上色查詢失敗：", err); layer.renderer = fallbackRenderer; });
+    };
+    mapCardRecolorForYear = recolor;
+    recolor(isMulti() ? YEARS[YEARS.length-1] : year); // 多時期一開始固定顯示最新一年，跟時間軸預設值一致
+  }
+  function showOverviewLegend(){
+    if(mapCardLegend) mapCardLegend.visible = true;
+    if(document.getElementById("mapCardLegendWrap")) document.getElementById("mapCardLegendWrap").style.display = "";
+    if(mapCardCustomLegendEl) mapCardCustomLegendEl.style.display = "none";
+  }
+
+  if(opt.kind === "diverging"){
+    queryFieldMinMax(layer, field, whereBase).then(({min, max})=>{
+      const minV = Math.min(min, opt.mid - 1), maxV = Math.max(max, opt.mid + 1);
+      const legendRenderer = buildDivergingRenderer(field, opt.mid, minV, maxV, opt.low, opt.high);
+      if(isOverview()){
+        layer.renderer = legendRenderer;
+        showOverviewLegend();
+      } else {
+        applySingleVillageIndicatorRenderer(v=> divergingColorForValue(v, opt.mid, minV, maxV, opt.low, opt.high), legendRenderer.classBreakInfos);
+      }
+    }).catch(err=>{ console.error(opt.label+"分級計算失敗，改用保底單色顯示：", err); layer.renderer = fallbackRenderer; });
+  } else {
+    computeEqualIntervalBreaks(layer, field, whereBase, 4).then(breaks=>{
+      const legendRenderer = buildSequentialRenderer(field, breaks, opt.color);
+      if(isOverview()){
+        layer.renderer = legendRenderer;
+        showOverviewLegend();
+      } else {
+        applySingleVillageIndicatorRenderer(v=> sequentialColorForValue(v, breaks, opt.color), legendRenderer.classBreakInfos);
+      }
+    }).catch(err=>{ console.error(opt.label+"分級計算失敗，改用保底單色顯示：", err); layer.renderer = fallbackRenderer; });
+  }
+}
+function applyMapCardPieRenderer(){
+  const layer = mapCardLayers["pie"];
+  if(!layer) return;
+  bringLayerToFront(layer); // 圓餅一律蓋在人口密度上面，包含一開始預設進來的時候
+  const year = YEARS[state.yearIndex];
+  layer.renderer = {
+    type: "pie-chart",
+    attributes: [
+      { field: `M_${year}`, color:"#2f5fa8", label:"男" },
+      { field: `F_${year}`, color:"#b85f5d", label:"女" }
+    ],
+    visualVariables: [{
+      type: "size",
+      valueExpression: `$feature["M_${year}"] + $feature["F_${year}"]`,
+      minSize: 16, maxSize: 52,
+      minDataValue: 800, maxDataValue: 2200
+    }]
+  };
+}
+function applyMapCardFilter(key){
+  const opt = mapCardOption(key);
+  const layer = mapCardLayers[opt && opt.group];
+  if(!opt || !layer) return;
+  // 村界一律顯示三村（不因選了特定村就把其他兩村的邊界濾掉），跟單村單時期的呈現方式一致；
+  // 只有圓餅（男女人口數值標記）維持依選中村篩選，因為那是數值標記不是村界
+  if(opt.kind === "combo"){
+    const pieLayer = mapCardLayers.pie;
+    if(pieLayer){
+      pieLayer.definitionExpression = isOverview() ? "1=1" : `${MAP_VILLAGE_FIELD}='${state.village}村'`;
+      pieLayer.visible = !isMulti(); // 圓餅無法動畫播放，多時期自動隱藏，只留密度底圖播放
+    }
+  }
+  const timeControlEl = document.getElementById("mapCardTimeControl");
+  if(isMulti()){
+    layer.definitionExpression = "1=1";
+    if(mapCardAnimator) mapCardAnimator.stop();
+    if(timeControlEl){
+      mapCardAnimator = createMapYearAnimator("mapCardTimeControl", (year)=>{
+        layer.definitionExpression = yearDateClause(year);
+        mapCardCurrentYear = year;
+        if(!isOverview() && mapCardRecolorForYear) mapCardRecolorForYear(year); // 單村模式：時間軸換年份要跟著重新上色
+      });
+    }
+  } else {
+    if(mapCardAnimator){ mapCardAnimator.stop(); mapCardAnimator=null; }
+    if(timeControlEl) timeControlEl.innerHTML = "";
+    const year = YEARS[state.yearIndex];
+    layer.definitionExpression = yearDateClause(year);
+    mapCardCurrentYear = year;
+  }
+}
+
+function switchMapCardLayer(key){
+  const opt = mapCardOption(key);
+  // 依「group」切換可見度：同一組（例如人口指標）共用同一個圖層物件，只是切換要讀的欄位
+  Object.keys(mapCardLayers).forEach(g=> mapCardLayers[g].visible = (g===opt.group));
+  if(opt.kind === "combo" && mapCardLayers.pie){
+    mapCardLayers.pie.visible = !isMulti(); // 圓餅在combo模式下跟著index一起顯示（單時期才顯示）
+  }
+  mapCardActive = key;
+  bringLayerToFront(mapCardLayers[opt.group]); // 塗色圖層放最上面，邊界才不會被蓋掉
+  if(opt.kind === "combo" && mapCardLayers.pie) bringLayerToFront(mapCardLayers.pie); // 圓餅要蓋在密度上面
+  applyMapCardRenderer(key);
+  applyMapCardFilter(key);
+  refreshVillageLabels(opt.kind === "combo" && !isMulti()); // 多時期時圓餅圖不會顯示（只剩密度），這時combo頁籤要當作跟其他指標同一組
+  if(mapCardLegend) mapCardLegend.layerInfos = buildLegendInfos(key);
+  document.querySelectorAll("#mapCardTabs button").forEach(b=> b.classList.toggle("active", b.dataset.k===key));
+}
+
+function mapCardTabsHTML(){
+  return `<div class="idx-tabs" id="mapCardTabs" style="flex-wrap:wrap; background:rgba(255,255,255,0.92); padding:4px; border-radius:8px; max-width:calc(100% - 16px);">${MAP_LAYER_OPTIONS.map(o=>{
+    const label = (o.key==="pop_combo" && isMulti()) ? "人口密度" : o.label;
+    return `<button data-k="${o.key}" class="${mapCardActive===o.key?'active':''}">${label}</button>`;
+  }).join("")}</div>`;
+}
+function bindMapCardTabs(){
+  document.querySelectorAll("#mapCardTabs button").forEach(btn=>{
+    btn.addEventListener("click", ()=> switchMapCardLayer(btn.dataset.k));
+  });
+}
+
+// 彈窗內容依目前 mapCardActive 動態決定（因為同一個圖層物件會被多個指標共用）
+function mapCardVillageNameFromAttrs(attrs){
+  // 不同服務的村名欄位命名可能不一致，依序嘗試常見欄位名稱
+  return attrs[MAP_VILLAGE_FIELD] || attrs["VILLNAME"] || attrs["VILL_NAME"] || attrs["Village"] || attrs["village"] || attrs["村名"] || attrs["NAME"] || "";
+}
+function mapCardPopupTitleForGroup(f){
+  const attrs = f.graphic.attributes;
+  if(f.graphic.layer === mapCardLayers.pie){
+    // 圓餅圖用的是 pie-chart 渲染器，點擊後拿到的graphic常常只帶有渲染器參照到的欄位(M_/F_年份)，
+    // VILLAGE不在其中所以會是undefined，這裡用OBJECTID重新查一次以確保拿到正確村名
+    const oidField = mapCardLayers.pie.objectIdField || "OBJECTID";
+    const oid = attrs[oidField];
+    return mapCardLayers.pie.queryFeatures({ objectIds:[oid], outFields:[MAP_VILLAGE_FIELD], returnGeometry:false })
+      .then(result=>{
+        const vname = (result.features[0] && result.features[0].attributes[MAP_VILLAGE_FIELD]) || mapCardVillageNameFromAttrs(attrs);
+        return `${YEARS[state.yearIndex]}年${vname}`;
+      })
+      .catch(()=> `${YEARS[state.yearIndex]}年${mapCardVillageNameFromAttrs(attrs)}`);
+  }
+  const vname = mapCardVillageNameFromAttrs(attrs);
+  const yearFromAttr = yearFromDate(attrs.DATE_Y);
+  // 優先用資料本身的年份；抓不到時退回目前畫面顯示的年份，確保一定有年份可顯示
+  const year = yearFromAttr || mapCardCurrentYear || YEARS[state.yearIndex];
+  return year ? `${year}年${vname}` : vname;
+}
+function mapCardPopupContentForGroup(f){
+  if(f.graphic.layer === mapCardLayers.pie){
+    const year = YEARS[state.yearIndex];
+    const attrs = f.graphic.attributes;
+    return `${year}年 男：${attrs["M_"+year]}<br>${year}年 女：${attrs["F_"+year]}`;
+  }
+  const opt = mapCardOption(mapCardActive);
+  const field = (opt.kind === "combo") ? "DEN" : opt.key;
+  const meta = MAP_INDICATOR_META[field];
+  const label = meta ? meta.label : opt.label;
+  return `${label}：${fmtIndicator(field, f.graphic.attributes[field])}`;
+}
+
+function isSingleVillagePeriod(){ return !isOverview() && !isMulti(); }
+function hexToRgbArray(hex, alpha){
+  const h = hex.replace("#","");
+  const r = parseInt(h.substring(0,2),16), g = parseInt(h.substring(2,4),16), b = parseInt(h.substring(4,6),16);
+  return alpha!==undefined ? [r,g,b,alpha] : [r,g,b];
+}
+
+function fetchFullVillageIndicators(village, year){
+  const vClause = ` AND ${MAP_VILLAGE_FIELD}='${village}村'`;
+  const idxLayer = mapCardLayers.index, chgLayer = mapCardLayers.change;
+  const curClause = yearDateClause(year) + vClause;
+  const prevClause = yearDateClause(year-1) + vClause;
+  return Promise.all([
+    idxLayer.queryFeatures({ where: curClause, outFields:["SEX","DEP","YNG","OLD","AGE","DEN"], returnGeometry:false }),
+    idxLayer.queryFeatures({ where: prevClause, outFields:["SEX","DEP","YNG","OLD","AGE","DEN"], returnGeometry:false }),
+    chgLayer.queryFeatures({ where: curClause, outFields:["自增率","社增率"], returnGeometry:false }),
+    chgLayer.queryFeatures({ where: prevClause, outFields:["自增率","社增率"], returnGeometry:false })
+  ]).then(([curIdx, prevIdx, curChg, prevChg])=>{
+    const cur = Object.assign({}, curIdx.features[0] ? curIdx.features[0].attributes : {}, curChg.features[0] ? curChg.features[0].attributes : {});
+    const prev = Object.assign({}, prevIdx.features[0] ? prevIdx.features[0].attributes : {}, prevChg.features[0] ? prevChg.features[0].attributes : {});
+    return { cur, prev };
+  });
+}
+function buildFullVillagePopupHTML(cur, prev){
+  const rows = Object.keys(MAP_INDICATOR_META).map(key=>{
+    const meta = MAP_INDICATOR_META[key];
+    const v = cur[key], pv = prev[key];
+    let arrowHtml = "";
+    if(v!==null && v!==undefined && pv!==null && pv!==undefined){
+      const diff = v - pv;
+      const color = diff>0.005 ? "#2b8a3e" : diff<-0.005 ? "#c92a2a" : "#8a97a3";
+      const sym = diff>0.005 ? "▲" : diff<-0.005 ? "▼" : "－";
+      arrowHtml = `<span style="margin-left:14px; color:${color}; font-size:11px;">${sym}${Math.abs(diff).toFixed(meta.prec)}${meta.unit}</span>`;
+    }
+    return `<div style="display:flex; justify-content:space-between; padding:3px 0; border-bottom:1px solid #eee;"><span>${meta.label}</span><span>${fmtIndicator(key, v)}${arrowHtml}</span></div>`;
+  }).join("");
+  return `<div>${rows}</div><div style="font-size:10px; color:#8a97a3; margin-top:4px;">箭頭為與前一年比較</div>`;
+}
+function applySingleVillageView(){
+  Object.keys(mapCardLayers).forEach(g=> mapCardLayers[g].visible = (g==="index"));
+  const year = YEARS[state.yearIndex];
+  mapCardLayers.index.definitionExpression = yearDateClause(year); // 三村都要顯示，不篩村莊
+  mapCardCurrentYear = year;
+  bringLayerToFront(mapCardLayers.index); // 塗色圖層放最上面，邊界才不會被蓋掉
+
+  // 三村邊界統一用灰色細線，選中村用較粗邊框強調＋儀表板村色系（藍/綠/咖啡）填色
+  const uniqueValueInfos = VILLAGES.map(v=>{
+    const selected = (v === state.village);
+    return {
+      value: v + "村",
+      symbol: { type:"simple-fill",
+        color: selected ? hexToRgbArray(COLOR.villages[v], 0.55) : [0,0,0,0],
+        outline: { color: MAP_BOUNDARY_COLOR, width: selected ? 2 : 0.5 }
+      }
+    };
+  });
+  mapCardLayers.index.renderer = { type:"unique-value", field: MAP_VILLAGE_FIELD, uniqueValueInfos,
+    defaultSymbol:{ type:"simple-fill", color:[0,0,0,0], outline:{color: MAP_BOUNDARY_COLOR, width:0.5} }, defaultLabel:"" };
+
+  if(mapCardAnimator){ mapCardAnimator.stop(); mapCardAnimator=null; }
+  const timeControlEl = document.getElementById("mapCardTimeControl");
+  if(timeControlEl) timeControlEl.innerHTML = "";
+  if(mapCardLegend){ mapCardLegend.layerInfos = []; mapCardLegend.visible = false; if(mapCardLegend.container) mapCardLegend.container.style.display = "none"; } // 單村單時期不需要圖例
+  if(mapCardCustomLegendEl) mapCardCustomLegendEl.style.display = "none";
+  refreshVillageLabels(); // 只留選中村的村名，位置在該村土地中央（單一村莊時isComboTab參數不影響結果，一律用SINGLE那組）
+
+  const hintEl = document.getElementById("mapCardHint");
+  if(hintEl) hintEl.style.display = "";
+
+  fetchFullVillageIndicators(state.village, year).then(({cur, prev})=>{
+    mapCardLayers.index.popupTemplate = {
+      title: `${year}年${state.village}村`,
+      content: buildFullVillagePopupHTML(cur, prev)
+    };
+  }).catch(err=> console.error("單村指標查詢失敗：", err));
+}
+function applyMapCardState(){
+  const tabsWrap = document.getElementById("mapCardTabsWrap");
+  if(isSingleVillagePeriod()){
+    if(tabsWrap) tabsWrap.style.display = "none";
+    applySingleVillageView();
+  } else {
+    if(tabsWrap) tabsWrap.style.display = "";
+    const opt = mapCardOption(mapCardActive);
+    // 修正：之前只有「點頁籤」才會重設圖層可見度，從單村單時期切回來時容易卡在舊的visible狀態，
+    // 導致村界整個消失。這裡每次進到這個分支都強制重新對齊可見度。
+    Object.keys(mapCardLayers).forEach(g=> mapCardLayers[g].visible = (g===opt.group));
+    if(opt.kind === "combo" && mapCardLayers.pie){
+      mapCardLayers.pie.visible = !isMulti();
+    }
+    bringLayerToFront(mapCardLayers[opt.group]);
+    if(opt.kind === "combo" && mapCardLayers.pie) bringLayerToFront(mapCardLayers.pie);
+    const comboBtn = document.querySelector('#mapCardTabs button[data-k="pop_combo"]');
+    if(comboBtn) comboBtn.textContent = isMulti() ? "人口密度" : "男女人口＆人口密度";
+    const hintEl = document.getElementById("mapCardHint");
+    if(hintEl) hintEl.style.display = "none";
+    refreshVillageLabels(opt.kind === "combo" && !isMulti()); // 總覽顯示三村、選單村只留該村，一律置於土地中央；總覽時再依是否為combo頁籤細分offset（多時期沒有圓餅圖，視同OTHER）
+    // 可能剛從單村模式切回來，確保彈窗還原成正常版本
+    mapCardLayers.index.popupTemplate = { title: mapCardPopupTitleForGroup, content: mapCardPopupContentForGroup };
+    mapCardLayers.change.popupTemplate = { title: mapCardPopupTitleForGroup, content: mapCardPopupContentForGroup };
+    applyMapCardRenderer(mapCardActive);
+    applyMapCardFilter(mapCardActive);
+    if(mapCardLegend){ mapCardLegend.visible = true; if(mapCardLegend.container) mapCardLegend.container.style.display = ""; mapCardLegend.layerInfos = buildLegendInfos(mapCardActive); }
+  }
+}
+
+function renderMapCard(){
+  const el = document.getElementById("body0");
+  if(!el) return;
+  if(mapCardView){
+    applyMapCardState();
+    return;
+  }
+  el.innerHTML = `
+    <div style="position:relative; width:100%; height:100%;">
+      <div id="mapCardTabsWrap" style="position:absolute; top:8px; left:8px; z-index:5;">${mapCardTabsHTML()}</div>
+      <div id="mapCardHint" style="display:none; position:absolute; top:8px; left:8px; z-index:5; background:rgba(255,255,255,0.92); padding:6px 14px; border-radius:8px; font-size:12.5px; color:var(--text-dim);">請點選地圖顯示人口指標統計值</div>
+      <div id="mapCardViewDiv" style="width:100%;height:100%"></div>
+      <div id="mapCardTimeControl" style="position:absolute; bottom:0; left:0; right:96px; background:rgba(255,255,255,0.92); border-radius:0 8px 0 0;"></div>
+    </div>`;
+  bindMapCardTabs();
+  require(["esri/Map","esri/views/MapView","esri/layers/FeatureLayer","esri/layers/GraphicsLayer","esri/Graphic","esri/widgets/Legend","esri/widgets/Zoom","esri/widgets/Home"],
+    (Map, MapView, FeatureLayer, GraphicsLayer, Graphic, Legend, Zoom, Home)=>{
+      _esriMod.GraphicsLayer = GraphicsLayer;
+      _esriMod.Graphic = Graphic;
+      mapCardMap = new Map({ basemap:"gray-vector" });
+      // 只建立 3 個真正的圖層物件（圓餅/指標/增減），指標之間只是切換欄位，不重新建圖層
+      const activeGroup = mapCardOption(mapCardActive).group;
+      Object.keys(MAP_GROUP_URL).forEach(group=>{
+        const layer = new FeatureLayer({
+          url: MAP_GROUP_URL[group], title: group, visible: (group===activeGroup),
+          popupTemplate: { title: mapCardPopupTitleForGroup, content: mapCardPopupContentForGroup }
+        });
+        mapCardLayers[group] = layer;
+        mapCardMap.add(layer);
+      });
+      mapCardView = new MapView({
+        container:"mapCardViewDiv", map: mapCardMap, center:[121.49,22.665], zoom:12, ui:{components:[]},
+        highlightOptions: { color: "#c7cdd4", fillOpacity: 0, haloOpacity: 0.9 }, // 點擊後的選取光暈改成淺灰色，避免蓋掉原本的邊界樣式
+        popup: { dockEnabled: false } // 跟土地利用地圖一樣：點哪裡彈窗就從哪裡冒出來，不要固定在角落被按鈕擋住
+      });
+      console.log("[合併地圖] MapView 物件已建立，容器實際尺寸：", document.getElementById("mapCardViewDiv").offsetWidth, "x", document.getElementById("mapCardViewDiv").offsetHeight);
+      // 圖例外面自己包一層 div 控制寬高（改這裡：200x200）；裡面放兩塊內容切換顯示：
+      // 1) legendWrap：總覽時用，讓 ArcGIS Legend widget 自動產生「色階代表的數值範圍」圖例
+      // 2) customLegendEl：單村時用，因為單村模式的圖層渲染器改成「只有選中村上色」的unique-value，
+      //    ArcGIS自動產生的圖例只會顯示村名，不是我們要的色階說明，所以改成自己刻同一套色階內容
+      const legendOuter = document.createElement("div");
+      legendOuter.id = "mapCardLegendOuter";
+      legendOuter.style.width = "180px"; // 圖例寬度：改這裡
+      legendOuter.style.maxHeight = "200px"; // 圖例最大高度：改這裡，超過會出現捲軸
+      legendOuter.style.overflowY = "auto";
+      legendOuter.style.overflowX = "hidden";
+      legendOuter.style.boxSizing = "border-box";
+      legendOuter.style.scrollbarWidth = "thin"; // Firefox：捲軸細一點比較不搶眼
+      // 固定從頂端往下長（不要跟著內容多寡從下往上長）：改 top 這個值可以調整整個圖例離頂端多遠
+      // 用百分比而不是固定px，是因為地圖卡片高度可能不同，用百分比才能維持在原本偏下方的區域，不會跳到地圖最上面蓋住色塊
+      legendOuter.style.position = "absolute";
+      legendOuter.style.top = "63%"; // 圖例距離地圖卡片頂端的距離：改這裡（可以用px也可以用%）
+      legendOuter.style.left = "12px";
+      const legendOuterScrollbarStyle = document.createElement("style");
+      legendOuterScrollbarStyle.textContent = "#mapCardLegendOuter::-webkit-scrollbar{width:6px;} #mapCardLegendOuter::-webkit-scrollbar-thumb{background:#c7cdd4;border-radius:3px;} "
+        + "#mapCardLegendWrap, #mapCardLegendWrap > div, #mapCardLegendWrap .esri-legend, #mapCardLegendWrap .esri-widget, "
+        + "#mapCardLegendWrap .esri-legend__layer, #mapCardLegendWrap .esri-legend__layer-body, #mapCardLegendWrap .esri-legend__layer-row, "
+        + "#mapCardLegendWrap .esri-legend__layer-caption, #mapCardLegendWrap .esri-legend__layer-cell, #mapCardLegendWrap .esri-legend__layer-cell--info, "
+        + "#mapCardLegendWrap table, #mapCardLegendWrap tbody, #mapCardLegendWrap tr, #mapCardLegendWrap td "
+        + "{ width:100% !important; max-width:100% !important; box-sizing:border-box !important; white-space:normal !important; word-break:break-word !important; }"; // ArcGIS的Legend widget內部包了好幾層div/table，寬度各自都是shrink-to-fit，這裡把整條路徑都強制撐滿
+      document.head.appendChild(legendOuterScrollbarStyle);
+      const legendWrap = document.createElement("div");
+      legendWrap.id = "mapCardLegendWrap";
+      legendWrap.className = "esri-widget"; // 讓總覽用的ArcGIS原生圖例保留白底/圓角/陰影
+      legendWrap.style.borderRadius = "6px";
+      legendWrap.style.boxShadow = "0 1px 4px rgba(0,0,0,0.3)";
+      legendWrap.style.width = "100%"; // 白色底要跟外層一樣寬，不然會留白邊
+      legendWrap.style.boxSizing = "border-box";
+      const customLegendEl = document.createElement("div");
+      customLegendEl.id = "mapCardCustomLegend";
+      customLegendEl.className = "esri-widget"; // 自訂色階圖例也套同一套樣式，跟總覽版一致
+      customLegendEl.style.display = "none";
+      customLegendEl.style.fontFamily = "inherit";
+      customLegendEl.style.borderRadius = "6px";
+      customLegendEl.style.boxShadow = "0 1px 4px rgba(0,0,0,0.3)";
+      customLegendEl.style.width = "100%";
+      customLegendEl.style.boxSizing = "border-box";
+      legendOuter.appendChild(legendWrap);
+      legendOuter.appendChild(customLegendEl);
+      mapCardCustomLegendEl = customLegendEl;
+      mapCardLegendOuterEl = legendOuter;
+      mapCardLegend = new Legend({ view: mapCardView, container: legendWrap, layerInfos: buildLegendInfos(mapCardActive) });
+      mapCardView.ui.add(legendOuter, "manual"); // 用manual＋自己的絕對定位，才能固定從頂端往下長
+      mapCardView.when(
+        ()=>{
+          console.log("[合併地圖] MapView 就緒（when 成功觸發）");
+          mapCardLayers.index.load().then(()=>{
+            console.log("[合併地圖] 指標圖層載入成功，欄位範例：", mapCardLayers.index.fields ? mapCardLayers.index.fields.map(f=>f.name) : "無法取得欄位清單");
+            applyMapCardState();
+            const ext = mapCardLayers.index.fullExtent;
+            // 想把初始畫面往上拉，就加大 MAP_CARD_VIEW_BOTTOM_PAD（下方留白變多＝內容整體被推高）
+            // 想把畫面往下壓，就加大 MAP_CARD_VIEW_TOP_PAD。兩個都是「留白佔整體高度的比例」，數字越大留白越多。
+            const MAP_CARD_VIEW_TOP_PAD = 0.05;
+            const MAP_CARD_VIEW_BOTTOM_PAD = 0.25;
+            const MAP_CARD_VIEW_SIDE_PAD = 0.05;
+            const MAP_CARD_VIEW_EXTRA_ZOOM = 0.3; // 初始視圖再放大一點點：數字越大放得越大，0就是不額外放大
+            let fitExtent = ext;
+            if(ext){
+              const h = ext.ymax - ext.ymin, w = ext.xmax - ext.xmin;
+              fitExtent = ext.clone();
+              fitExtent.ymax = ext.ymax + h * MAP_CARD_VIEW_TOP_PAD;
+              fitExtent.ymin = ext.ymin - h * MAP_CARD_VIEW_BOTTOM_PAD;
+              fitExtent.xmin = ext.xmin - w * MAP_CARD_VIEW_SIDE_PAD;
+              fitExtent.xmax = ext.xmax + w * MAP_CARD_VIEW_SIDE_PAD;
+            }
+            if(ext) mapCardView.goTo(fitExtent).then(()=>{
+              mapCardView.zoom = mapCardView.zoom + MAP_CARD_VIEW_EXTRA_ZOOM; // 初始視圖再放大一點點：改這個數字調整放大幅度
+              const home = new Home({ view: mapCardView, viewpoint: mapCardView.viewpoint.clone() });
+              const zoomWidget = new Zoom({ view: mapCardView });
+              mapCardView.ui.add([zoomWidget, home], "bottom-right");
+            });
+          }).catch(err=> console.error("合併地圖初始圖層載入失敗：", err));
+        },
+        (err)=>{ console.error("[合併地圖] MapView 初始化本身就失敗了：", err); }
+      );
+    });
+}
+
+function render10(){
+  const el = document.getElementById("body10");
+  if(!isOverview()){
+    el.innerHTML = `<div class="placeholder-x"><div class="x-mark">✕</div>氣象站無分村里資料<br>請切換至「總覽（三村）」查看</div>`;
+    return;
+  }
+  if(!isMulti()){
+    const y = YEARS[state.yearIndex];
+    const d = REAL_WEATHER[y];
+    el.innerHTML = `<div class="chart-wrap" id="body10main" style="height:260px"></div><div class="legend-row" id="body10note" style="margin-top:8px"></div>`;
+    mountChart("body10main", { type:"bar", data:{ labels:MONTHS, datasets:[
+      { type:"bar", label:"月降雨量", data:d.monthlyRain, backgroundColor:"#a9c6e8", yAxisID:"y1", order:3 },
+      { type:"line", label:"月均溫", data:d.monthlyAvg, borderColor:COLOR.blue, backgroundColor:"transparent", tension:.35, yAxisID:"y", order:1, borderWidth:2.5 },
+      { type:"line", label:"最高溫", data:d.monthlyMax, borderColor:"#e8672b", backgroundColor:"transparent", tension:.35, yAxisID:"y", order:1, borderWidth:1.5, pointRadius:2, borderDash:[4,3] },
+      { type:"line", label:"最低溫", data:d.monthlyMin, borderColor:"#1f9186", backgroundColor:"transparent", tension:.35, yAxisID:"y", order:1, borderWidth:1.5, pointRadius:2, borderDash:[4,3] }
+    ]}, options: baseOptions({
+      scales:{ x:{ ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} },
+        y:{ position:"left", ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} },
+        y1:{ type:"linear", position:"right", min:0, ticks:{color:tickColor,font:baseFont}, grid:{drawOnChartArea:false} } }
+    }, {x:"月份", y:"氣溫(°C)", y1:"降雨量(mm)"}) });
+    const maxTxt = d.yearMaxVal!==null ? `${d.yearMaxVal}°C（${d.yearMaxDate}）` : "無資料";
+    const minTxt = d.yearMinVal!==null ? `${d.yearMinVal}°C（${d.yearMinDate}）` : "無資料";
+    document.getElementById("body10note").innerHTML = `<span>${y} 年最高溫：<b style="color:var(--text)">${maxTxt}</b></span><span>${y} 年最低溫：<b style="color:var(--text)">${minTxt}</b></span>`;
+  } else {
+    el.innerHTML = `<div class="chart-wrap" id="body10main" style="height:260px"></div>`;
+    mountChart("body10main", { type:"bar", data:{ labels:YEARS, datasets:[
+      { type:"bar", label:"年降雨量", data:YEARS.map(y=>REAL_WEATHER[y].yearRain), backgroundColor:"#a9c6e8", yAxisID:"y1", order:3 },
+      { type:"line", label:"年最高溫（極端值）", data:YEARS.map(y=>REAL_WEATHER[y].yearMaxVal), borderColor:"#e8672b", backgroundColor:"transparent", tension:.3, yAxisID:"y", order:1, borderWidth:2 },
+      { type:"line", label:"年最低溫（極端值）", data:YEARS.map(y=>REAL_WEATHER[y].yearMinVal), borderColor:"#1f9186", backgroundColor:"transparent", tension:.3, yAxisID:"y", order:1, borderWidth:2 },
+      { type:"line", label:"年均溫", data:YEARS.map(y=>REAL_WEATHER[y].yearAvg), borderColor:COLOR.blue, backgroundColor:"transparent", tension:.3, yAxisID:"y", order:1, borderWidth:2, borderDash:[4,3] }
+    ]}, options: baseOptions({
+      scales:{ x:{ ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} },
+        y:{ position:"left", ticks:{color:tickColor,font:baseFont}, grid:{color:gridColor} },
+        y1:{ type:"linear", position:"right", min:0, ticks:{color:tickColor,font:baseFont}, grid:{drawOnChartArea:false} } }
+    }, {x:"年份", y:"氣溫(°C)", y1:"降雨量(mm)"}) });
+  }
+}
+
+function render12(){
+  const el = document.getElementById("body12");
+  if(!isOverview()){
+    el.innerHTML = `<div class="placeholder-x"><div class="x-mark">✕</div>觀光人次無分村里資料<br>請切換至「總覽（三村）」查看</div>`;
+    return;
+  }
+  if(!isMulti()){
+    const y = YEARS[state.yearIndex];
+    const data = REAL_TOURISM.monthly[y];
+    el.innerHTML = `<div class="chart-wrap" id="body12main" style="height:260px"></div>`;
+    mountChart("body12main", { type:"line", data:{ labels:MONTHS, datasets:[
+      { label:`${y} 年遊客人次`, data, borderColor:COLOR.blue, backgroundColor:"rgba(47,95,168,0.08)", fill:true, tension:.3 }
+    ]}, options: baseOptions({ plugins:{legend:{display:false}, tooltip: baseOptions().plugins.tooltip} }, {x:"月份", y:"人次"}) });
+  } else {
+    el.innerHTML = `<div class="chart-wrap" id="body12main" style="height:260px"></div>`;
+    mountChart("body12main", { type:"line", data:{ labels:YEARS, datasets:[
+      { label:"年遊客人次", data:REAL_TOURISM.yearly, borderColor:COLOR.blue, backgroundColor:"rgba(47,95,168,0.08)", fill:true, tension:.3 }
+    ]}, options: baseOptions({ plugins:{legend:{display:false}, tooltip: baseOptions().plugins.tooltip} }, {x:"年份", y:"人次"}) });
+  }
+}
+
+function updateActiveButtons(){
+  document.querySelectorAll("#villageSeg button").forEach(b=> b.classList.toggle("active", b.dataset.village===state.village));
+  document.querySelectorAll("#periodSeg button").forEach(b=> b.classList.toggle("active", b.dataset.period===state.period));
+}
+// 每次資料重新渲染完之後執行：地圖固定在中欄最上面（①男女人口疊在地圖正上方），
+// 人口相關卡片（②③⑥）優先分配到左右兩欄，形成包住地圖上緣＋兩側的ㄇ字視覺；
+// 其餘非人口卡片再依高度貪婪塞進目前最短的欄；沒資料（含.placeholder-x）的卡片直接隱藏、不佔版面。
+const NUM_MASONRY_COLS = 5; // 卡片分幾欄：改這個數字＋HTML裡對應數量的 mcolX 容器即可調整
+const MAP_COL_INDEX = 2; // 地圖固定放第幾欄（0起算），5欄時放中間第3欄比較置中
+const MID_TOP_CARD_ID = "card1"; // 疊在地圖正上方、當作ㄇ字頂端的卡片
+const POP_SIDE_CARD_IDS = ["card2","card6"]; // 優先分配到「地圖以外」其他欄的人口相關卡片（③已改成獨立寬版，不在這裡）
+const REST_CARD_IDS = ["card4","card5","card7","card8","cardMed","card10","card12"]; // 其餘依高度貪婪分配（⑩已改成獨立寬版，不在這裡）
+
+function layoutMasonry(){
+  const pool = document.getElementById("cardPool");
+  const cols = [];
+  for(let i=0;i<NUM_MASONRY_COLS;i++) cols.push(document.getElementById("mcol"+i));
+  if(!pool || cols.some(c=>!c)) return;
+  // 先把所有卡片收回 pool 重新分配，避免舊的欄位分配殘留
+  document.querySelectorAll(".masonry-card").forEach(c=> pool.appendChild(c));
+  cols.forEach(c=>{ c.innerHTML = ""; });
+  const heights = new Array(NUM_MASONRY_COLS).fill(0);
+
+  function isVisible(card){ return card && !card.querySelector(".placeholder-x"); }
+  function place(card, idx){
+    card.style.display = "";
+    cols[idx].appendChild(card);
+    heights[idx] += card.offsetHeight + 16; // +16 對應欄內卡片間的gap
+  }
+  function hide(card){ if(card) card.style.display = "none"; }
+
+  // 1) 地圖固定欄：①（若有資料）疊在最上面，接著是地圖
+  const topCard = document.getElementById(MID_TOP_CARD_ID);
+  if(isVisible(topCard)) place(topCard, MAP_COL_INDEX); else hide(topCard);
+  const mapCard = document.getElementById("card0");
+  if(isVisible(mapCard)) place(mapCard, MAP_COL_INDEX); else hide(mapCard);
+
+  // 1.5) ③人口指標：只有「單村＋單時期」內容比較簡單緊湊，維持寬版（combo-region）；
+  // 其他狀態（總覽單時期、所有多時期）已經改成選單只顯示一個指標，改成跟其他卡片一樣走一般欄位分配、維持單欄寬度
+  const card3Slot = document.getElementById("card3Slot");
+  const card3El = document.getElementById("card3");
+  const card3NeedsWide = !isOverview() && !isMulti(); // 只有單村單時期才要寬版
+  if(card3Slot && card3El){
+    if(!isVisible(card3El)){
+      hide(card3El);
+      card3Slot.style.display = "none";
+    } else if(card3NeedsWide){
+      card3El.style.display = "";
+      card3El.style.width = "100%"; // 撐滿專屬欄位的寬度
+      card3El.style.zoom = "";
+      card3Slot.appendChild(card3El);
+      card3Slot.style.display = "";
+    } else {
+      card3Slot.style.display = "none";
+      card3El.style.width = "300px"; // 換回一般卡片固定設計寬度，等一下跟其他卡片一起用zoom縮放
+      // 這裡先不放，緊接著跟其他人口相關卡片一起處理（放進「地圖以外」欄位、貪婪分配）
+    }
+  }
+
+  // 1.6) ⑩土地利用：跟③人口指標同樣的做法，放進右邊那個combo-region最上面，撐滿兩欄寬
+  const card9Slot = document.getElementById("card9Slot");
+  const card9El = document.getElementById("card9");
+  if(card9Slot && card9El){
+    if(isVisible(card9El)){
+      card9El.style.display = "";
+      card9El.style.width = "100%";
+      card9El.style.zoom = "";
+      card9Slot.appendChild(card9El);
+      card9Slot.style.display = "";
+    } else {
+      hide(card9El);
+      card9Slot.style.display = "none";
+    }
+  }
+
+  // 2) 人口相關卡片優先分配到「地圖以外、也不是⑩土地利用專屬」的其他欄，形成包住地圖的效果
+  // （③人口指標若這次不需要寬版，也會加進這裡一起參加分配）
+  const CARD9_RESERVED_COLS = isMulti() ? [3, 4] : []; // 多時期時⑩土地利用佔用的兩欄（mcol3、mcol4）專用，其他卡片不會被塞進去，改往左邊分散
+  const sideColIdx = cols.map((_,i)=>i).filter(i=> i!==MAP_COL_INDEX && !CARD9_RESERVED_COLS.includes(i));
+  const popSideIds = card3NeedsWide ? POP_SIDE_CARD_IDS : [...POP_SIDE_CARD_IDS, "card3"];
+  popSideIds.forEach(id=>{
+    const card = document.getElementById(id);
+    if(!isVisible(card)){ hide(card); return; }
+    let idx = sideColIdx[0];
+    sideColIdx.forEach(i=>{ if(heights[i] < heights[idx]) idx = i; });
+    place(card, idx);
+  });
+
+  // 3) 其餘非人口卡片，一般貪婪分配到目前最短的欄（含地圖那欄，一樣排除⑩的專屬兩欄）
+  const restColIdx = cols.map((_,i)=>i).filter(i=> !CARD9_RESERVED_COLS.includes(i));
+  REST_CARD_IDS.forEach(id=>{
+    const card = document.getElementById(id);
+    if(!isVisible(card)){ hide(card); return; }
+    let idx = restColIdx[0];
+    restColIdx.forEach(i=>{ if(heights[i] < heights[idx]) idx = i; });
+    place(card, idx);
+  });
+
+  scaleCardsToColumnWidth(cols);
+}
+let masonryResizeTimer = null;
+window.addEventListener("resize", ()=>{
+  clearTimeout(masonryResizeTimer);
+  masonryResizeTimer = setTimeout(()=>{
+    if(document.fullscreenElement) return; // 全螢幕時進入這裡會把卡片搬進隱藏的pool、逼瀏覽器自動退出全螢幕，先跳過
+    layoutMasonry();
+  }, 150); // 視窗寬度變動（例如圖表reflow影響高度）時重新排一次，debounce避免頻繁觸發
+});
+
+const CARD_DESIGN_WIDTH = 300; // 卡片原本設計的寬度（px）；欄位實際比這個窄，卡片才會照比例縮小
+// 欄位本身永遠撐滿螢幕寬度（5欄平分），卡片依「欄位實際寬度 ÷ 卡片設計寬度」個別用zoom縮放，
+// 保持卡片自己原本的長寬比不變形；用zoom而不是transform:scale，是因為zoom縮小後瀏覽器排版真的會照縮小後的尺寸算，
+// 同一欄裡疊著的下一張卡片才不會留下奇怪的空隙
+function scaleCardsToColumnWidth(cols){
+  cols.forEach(col=>{
+    const colWidth = col.clientWidth;
+    if(colWidth <= 0) return;
+    const ratio = Math.min(1, colWidth / CARD_DESIGN_WIDTH); // 欄位比設計寬度窄才縮小，不會放大超過原始尺寸
+    Array.from(col.children).forEach(card=>{
+      card.style.zoom = ratio;
+    });
+  });
+}
+let colResizeTimer = null;
+window.addEventListener("resize", ()=>{
+  clearTimeout(colResizeTimer);
+  colResizeTimer = setTimeout(()=>{
+    if(document.fullscreenElement) return; // 同上，全螢幕時先跳過，避免干擾全螢幕元素
+    const cols = [];
+    for(let i=0;i<NUM_MASONRY_COLS;i++) cols.push(document.getElementById("mcol"+i));
+    scaleCardsToColumnWidth(cols);
+  }, 150);
+});
+
+function renderAll(){
+  updateTimelineVisibility();
+  renderMapCard(); render1(); render2(); render3(); render4(); render5(); render6(); render7(); render8(); renderMed(); render9(); render10(); render12();
+  layoutMasonry();
+}
+document.querySelectorAll("#villageSeg button").forEach(b=>{
+  b.addEventListener("click", ()=>{ state.village = b.dataset.village; updateActiveButtons(); renderAll(); });
+});
+document.querySelectorAll("#periodSeg button").forEach(b=>{
+  b.addEventListener("click", ()=>{ state.period = b.dataset.period; updateActiveButtons(); renderAll(); });
+});
+
+document.addEventListener("click", (e)=>{
+  const btn = e.target.closest(".info-btn");
+  if(!btn) return;
+  const detail = document.getElementById("info-"+btn.dataset.info);
+  if(detail) detail.style.display = detail.style.display==="none" ? "block" : "none";
+});
+
+document.addEventListener("click", (e)=>{
+  const btn = e.target.closest(".expand-btn");
+  if(!btn) return;
+  const card = btn.closest(".card");
+  if(!card) return;
+  if(document.fullscreenElement === card){
+    document.exitFullscreen();
+  } else if(card.requestFullscreen){
+    card.style.zoom = ""; // 全螢幕前先取消zoom縮放，不然畫面會照原本縮小的比例顯示，看起來像沒反應
+    card.requestFullscreen().catch(()=>{ layoutMasonry(); }); // 進入失敗就重新排版，把zoom還原
+  }
+});
+document.addEventListener("click", (e)=>{
+  const btn = e.target.closest(".expand-btn-mini");
+  if(!btn) return;
+  const block = btn.closest(".stat-block");
+  if(!block) return;
+  if(document.fullscreenElement === block){
+    document.exitFullscreen();
+  } else if(block.requestFullscreen){
+    block.requestFullscreen().catch(()=>{});
+  }
+});
+document.addEventListener("fullscreenchange", ()=>{
+  if(!document.fullscreenElement) layoutMasonry(); // 離開全螢幕後，重新排版讓每張卡片的zoom還原成正確比例
+  requestAnimationFrame(()=>{
+    Object.values(chartRegistry).forEach(ch=>{ if(ch && typeof ch.resize === "function") ch.resize(); });
+  });
+});
+
+buildTimeline();
+buildCompareWidget();
+document.addEventListener("click", (e)=>{
+  if(!comparePanelOpen) return;
+  if(e.target.closest(".compare-widget")) return;
+  comparePanelOpen = false;
+  const panel = document.getElementById("comparePanel");
+  if(panel) panel.style.display = "none";
+});
+renderAll();
+
+}
+
+const DATA_BASE = "https://p66154056-sandy.github.io/greenisland-data/data/";
+const DATA_FILES = {
+  REAL_DATA: DATA_BASE + "REAL_DATA.json",
+  REAL_INDEX: DATA_BASE + "REAL_INDEX.json",
+  COUNTY_DATA: DATA_BASE + "COUNTY_DATA.json",
+  ALL_TOWNS_DATA: DATA_BASE + "ALL_TOWNS_DATA.json",
+  REAL_EDU: DATA_BASE + "REAL_EDU.json",
+  REAL_MARITAL: DATA_BASE + "REAL_MARITAL.json",
+  REAL_POPCHANGE: DATA_BASE + "REAL_POPCHANGE.json",
+  REAL_ELDERLY_ALONE: DATA_BASE + "REAL_ELDERLY_ALONE.json",
+  REAL_HOUSING: DATA_BASE + "REAL_HOUSING.json",
+  MEDICAL_FACILITIES: DATA_BASE + "MEDICAL_FACILITIES.json",
+  REAL_WEATHER: DATA_BASE + "REAL_WEATHER.json",
+  REAL_TOURISM: DATA_BASE + "REAL_TOURISM.json",
+  LU_AREA_DATA: DATA_BASE + "LU_AREA_DATA.json"
+};
+async function bootstrapDashboard(){
+  const loadingEl = document.getElementById("loadingOverlay");
+  try {
+    const entries = Object.entries(DATA_FILES);
+    const results = await Promise.all(entries.map(([key, url]) => fetch(url).then(r => {
+      if(!r.ok) throw new Error(key + " 讀取失敗 (" + r.status + "): " + url);
+      return r.json();
+    })));
+    const dataByKey = {};
+    entries.forEach(([key], i) => { dataByKey[key] = results[i]; });
+    if(loadingEl) loadingEl.remove();
+    initDashboard(...["REAL_DATA","REAL_INDEX","COUNTY_DATA","ALL_TOWNS_DATA","REAL_EDU","REAL_MARITAL","REAL_POPCHANGE","REAL_ELDERLY_ALONE","REAL_HOUSING","MEDICAL_FACILITIES","REAL_WEATHER","REAL_TOURISM","LU_AREA_DATA"].map(k => dataByKey[k]));
+  } catch(err) {
+    console.error("資料載入失敗:", err);
+    if(loadingEl) loadingEl.innerHTML = "<div style=padding:40px;text-align:center;color:#b85f5d>資料載入失敗，請確認 data/ 資料夾路徑或網路連線。<br>" + err.message + "</div>";
+  }
+}
+bootstrapDashboard();
+</script>
+</body>
+</html>
